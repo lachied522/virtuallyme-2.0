@@ -1,0 +1,9 @@
+uvicorn
+fastapi
+pydantic
+asyncio
+aiohttp
+openai
+scikit-learn
+google-api-python-client
+beautifulsoup4
