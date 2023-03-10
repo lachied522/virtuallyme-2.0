@@ -126,7 +126,7 @@ app = FastAPI()
 
 # Set up allowed origins for CORS
 origins = [
-    "http://virtuallyme:10000"
+    "*"
 ]
 
 # Add middleware to app
