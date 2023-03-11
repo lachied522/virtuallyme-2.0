@@ -83,7 +83,7 @@ async def conduct_search(query):
     resource = build("customsearch", "v1", developerKey=api_key).cse()
     result = resource.list(q=query, cx=cse_ID).execute()
 
-    links = [item["link"] for item in result["items"]][:3]
+    links = [item["link"] for item in result["items"]]
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36",
         "Accept-Language": "en-US,en;q=0.9", 
@@ -104,23 +104,22 @@ async def conduct_search(query):
             urls = []
             for d in ranked_context:
                 url = d["url"]
-                if urls.count(url) < 2:
-                    if len(joined_context) > 8000:
-                        #max length 8000 characters ~ 2000 words
+                if urls.count(url) < 10:
+                    if len(joined_context.split())+len(d["text"].split()) > 2250:
+                        ##prompt limit 3097 tokens (4097-1000 for completion)
+                        ##1000 tokens ~ 750 words
                         break
                     else:
                         joined_context += d["text"]
                         urls.append(url)
             message = [{
                 "role": "user", 
-                "content": f"I would like to write about {query}. Summarise the relevant points from the following text, including any relevant dates or figures:\n{joined_context}"
+                "content": f"I would like to write about {query}. Summarise the relevant points from the following text, including any relevant dates or figures. Use a minimum of 300 words. Text:\n{joined_context}"
             }]
-            completion = turbo_openai_call(message, 500, 0.4, 0.4)
-            return {"result": completion, "urls": list(set(urls))}
+            completion = turbo_openai_call(message, 800, 0.4, 0.4)
+            return {"result": completion, "urls": list(set(urls))[:3]}
     except:
         return {"result": "", "urls": []}
-
-
 
 app = FastAPI()
 
@@ -137,7 +136,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 
 class Query(BaseModel):
     query: str
