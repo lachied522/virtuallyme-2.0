@@ -49,7 +49,6 @@ def rank_samples(search_string, samples):
         return cosine_similarities
 
 async def fetch_page(url, session):
-    print(f"fetching {url}")
     try:
         async with session.get(url) as response:
                 return await response.text()
@@ -57,22 +56,26 @@ async def fetch_page(url, session):
         return ""
 
 async def scrape(url, session):
-    html = await fetch_page(url, session)
-    soup = BeautifulSoup(html, 'html.parser')
-    # kill all script and style elements
-    for script in soup(["script", "style", "a", "header", "footer", "nav"]):
-        script.extract()    # rip it out
-    # get text
-    text = soup.get_text()
-    # break into lines and remove leading and trailing space on each
-    lines = (line.strip() for line in text.splitlines() if len(line)>128)
-    # break multi-headlines into a line each
-    chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-    # drop blank lines
-    text = '\n'.join(chunk for chunk in chunks if chunk)
-    #split text into blocks of 100 words
-    n = 100
-    return [{"text": " ".join(text.split()[i:i+n]), "url": url} for i in range(0, len(text.split()), n)]
+    try:
+        html = await asyncio.wait_for(fetch_page(url, session), timeout=5)
+        soup = BeautifulSoup(html, 'html.parser')
+        # kill all script and style elements
+        for script in soup(["script", "style", "a", "header", "footer", "nav"]):
+            script.extract()    # rip it out
+        # get text
+        text = soup.get_text()
+        # break into lines and remove leading and trailing space on each
+        lines = (line.strip() for line in text.splitlines() if len(line)>128)
+        # break multi-headlines into a line each
+        chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+        # drop blank lines
+        text = '\n'.join(chunk for chunk in chunks if chunk)
+        #split text into blocks of 100 words
+        n = 100
+        return [{"text": " ".join(text.split()[i:i+n]), "url": url} for i in range(0, len(text.split()), n)]
+    except:
+        return [{"text": "", "url": ""}]
+    
 
 async def conduct_search(query):    
     api_key = "AIzaSyCm-gGY014pfYImeiLMqCYuNGQ1nf8g2eg"
@@ -104,8 +107,8 @@ async def conduct_search(query):
         urls = []
         for d in ranked_context:
             url = d["url"]
-            if urls.count(url) < 10:
-                if len(joined_context.split())+len(d["text"].split()) > 2250:
+            if urls.count(url) < 3:
+                if len(joined_context)+len(d["text"]) > 8000:
                     ##prompt limit 3097 tokens (4097-1000 for completion)
                     ##1000 tokens ~ 750 words
                     break
@@ -118,7 +121,8 @@ async def conduct_search(query):
         }]
         completion = turbo_openai_call(message, 800, 0.4, 0.4)
         return {"result": completion, "urls": list(set(urls))[:5]}
-    except:
+    except Exception as e:
+        print(e)
         return {"result": "", "urls": []}
 
 app = FastAPI()
@@ -142,7 +146,6 @@ class Query(BaseModel):
 
 @app.post("/")
 async def root(query: Query):
-    print("hi")
     query_dict = query.dict()
     result = await conduct_search(str(query_dict["query"]))
     return result
