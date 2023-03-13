@@ -33,7 +33,7 @@ def turbo_openai_call(messages, max_tokens, temperature, presence_penalty):
 
 def rank_samples(search_string, samples):
     """
-    sort samples by how frequently common words appear, only consider words >3 characters
+    rank samples by how frequently common words appear
     
     :param search_string: 
     :param samples: array of strings to search through
@@ -83,7 +83,7 @@ async def conduct_search(query):
     resource = build("customsearch", "v1", developerKey=api_key).cse()
     result = resource.list(q=query, cx=cse_ID).execute()
 
-    links = [item["link"] for item in result["items"]]
+    links = [item["link"] for item in result["items"]][:5]
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36",
         "Accept-Language": "en-US,en;q=0.9", 
@@ -95,29 +95,29 @@ async def conduct_search(query):
             for url in links:
                 tasks.append(asyncio.ensure_future(scrape(url, session)))
             results = await asyncio.gather(*tasks)
-            
-            results = [{"text": d["text"], "url": d["url"]} for sublist in results for d in sublist]
-            cosine_similarities = rank_samples(query, [d["text"] for d in results])
-            ranked_context = [item for index, item in sorted(enumerate(results), key = lambda x: cosine_similarities[x[0]], reverse=True)]
-            #get a a bit of context from each url
-            joined_context = ""
-            urls = []
-            for d in ranked_context:
-                url = d["url"]
-                if urls.count(url) < 10:
-                    if len(joined_context.split())+len(d["text"].split()) > 2250:
-                        ##prompt limit 3097 tokens (4097-1000 for completion)
-                        ##1000 tokens ~ 750 words
-                        break
-                    else:
-                        joined_context += d["text"]
-                        urls.append(url)
-            message = [{
-                "role": "user", 
-                "content": f"I would like to write about {query}. Summarise the relevant points from the following text, including any relevant dates or figures. Use a minimum of 300 words. Text:\n{joined_context}"
-            }]
-            completion = turbo_openai_call(message, 800, 0.4, 0.4)
-            return {"result": completion, "urls": list(set(urls))[:3]}
+        
+        results = [{"text": d["text"], "url": d["url"]} for sublist in results for d in sublist]
+        cosine_similarities = rank_samples(query, [d["text"] for d in results])
+        ranked_context = [item for index, item in sorted(enumerate(results), key = lambda x: cosine_similarities[x[0]], reverse=True)]
+        #get a a bit of context from each url
+        joined_context = ""
+        urls = []
+        for d in ranked_context:
+            url = d["url"]
+            if urls.count(url) < 10:
+                if len(joined_context.split())+len(d["text"].split()) > 2250:
+                    ##prompt limit 3097 tokens (4097-1000 for completion)
+                    ##1000 tokens ~ 750 words
+                    break
+                else:
+                    joined_context += d["text"]
+                    urls.append(url)
+        message = [{
+            "role": "user", 
+            "content": f"I would like to write about {query}. Summarise the relevant points from the following text, including any relevant dates or figures. Use a minimum of 300 words. Text:\n{joined_context}"
+        }]
+        completion = turbo_openai_call(message, 800, 0.4, 0.4)
+        return {"result": completion, "urls": list(set(urls))[:5]}
     except:
         return {"result": "", "urls": []}
 
