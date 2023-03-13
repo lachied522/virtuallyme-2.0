@@ -83,7 +83,7 @@ async def conduct_search(query):
     resource = build("customsearch", "v1", developerKey=api_key).cse()
     result = resource.list(q=query, cx=cse_ID).execute()
 
-    links = [item["link"] for item in result["items"]][:5]
+    links = [item["link"] for item in result["items"]]
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36",
         "Accept-Language": "en-US,en;q=0.9", 
@@ -93,7 +93,7 @@ async def conduct_search(query):
         async with aiohttp.ClientSession(headers=headers) as session:
             tasks = []
             for url in links:
-                tasks.append(asyncio.ensure_future(scrape(url, session)))
+                tasks.append(asyncio.create_task(scrape(url, session)))
             results = await asyncio.gather(*tasks)
         
         results = [{"text": d["text"], "url": d["url"]} for sublist in results for d in sublist]
