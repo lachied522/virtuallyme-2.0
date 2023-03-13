@@ -142,6 +142,7 @@ class Query(BaseModel):
 
 @app.post("/")
 async def root(query: Query):
+    print("hi")
     query_dict = query.dict()
     result = await conduct_search(str(query_dict["query"]))
     return result
