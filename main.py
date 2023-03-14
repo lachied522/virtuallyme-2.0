@@ -57,7 +57,7 @@ async def fetch_page(url, session):
 
 async def scrape(url, session):
     try:
-        html = await asyncio.wait_for(fetch_page(url, session), timeout=5)
+        html = await asyncio.wait_for(fetch_page(url, session), timeout=4)
         soup = BeautifulSoup(html, 'html.parser')
         # kill all script and style elements
         for script in soup(["script", "style", "a", "header", "footer", "nav"]):
@@ -99,7 +99,7 @@ async def conduct_search(query):
                 tasks.append(asyncio.create_task(scrape(url, session)))
             results = await asyncio.gather(*tasks)
         
-        results = [{"text": d["text"], "url": d["url"]} for sublist in results for d in sublist]
+        results = [{"text": d["text"], "url": d["url"]} for sublist in results for d in sublist if d["text"]!=""]
         cosine_similarities = rank_samples(query, [d["text"] for d in results])
         ranked_context = [item for index, item in sorted(enumerate(results), key = lambda x: cosine_similarities[x[0]], reverse=True)]
         #get a a bit of context from each url
