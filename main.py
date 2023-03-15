@@ -14,6 +14,8 @@ from bs4 import BeautifulSoup
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
+from datetime import datetime
+
 
 ##openai api key
 OPENAI_API_KEY = "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"
@@ -26,9 +28,12 @@ GOOGLE_CSE_ID = "d7251a9905c2540fa"
 def turbo_openai_call(messages, max_tokens, temperature, presence_penalty):
     response = openai.ChatCompletion.create(
         model="gpt-3.5-turbo",
-        messages=messages
+        messages=messages,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        presence_penalty=presence_penalty
     )
-    return response["choices"][0]["message"]["content"]
+    return response["choices"][0]["message"]["content"].strip()
 
 
 def rank_samples(search_string, samples):
@@ -80,11 +85,12 @@ async def scrape(url, session):
 async def conduct_search(query):    
     api_key = "AIzaSyCm-gGY014pfYImeiLMqCYuNGQ1nf8g2eg"
     cse_ID = "d7251a9905c2540fa"
-
-    query += " -headlines -video -pdf"
+    #add current date in MMMM-YYYY format to Google search query
+    current_date = datetime.now()
+    date_string = current_date.strftime("%B %Y")
 
     resource = build("customsearch", "v1", developerKey=api_key).cse()
-    result = resource.list(q=query, cx=cse_ID).execute()
+    result = resource.list(q=query + f" {date_string} -headlines -video -pdf", cx=cse_ID).execute()
 
     links = [item["link"] for item in result["items"]]
     headers = {
@@ -117,7 +123,7 @@ async def conduct_search(query):
                     urls.append(url)
         message = [{
             "role": "user", 
-            "content": f"I would like to write about {query}. Summarise the relevant points from the following text, including any relevant dates or figures. Use a minimum of 300 words. Text:\n{joined_context}"
+            "content": f"I would like to write about {query}. Summarise the following text, including any relevant dates or figures. Text:\n{joined_context}"
         }]
         completion = turbo_openai_call(message, 800, 0.4, 0.4)
         return {"result": completion, "urls": list(set(urls))[:5]}
