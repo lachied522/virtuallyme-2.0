@@ -92,7 +92,21 @@ async def conduct_search(query):
     resource = build("customsearch", "v1", developerKey=api_key).cse()
     result = resource.list(q=query + f" {date_string} -headlines -video -pdf", cx=cse_ID).execute()
 
-    links = [item["link"] for item in result["items"]]
+    result_list = []
+    for item in result["items"]:
+        if "preview" in item["pagemap"]["metatags"][0]:
+            preview = item["pagemap"]["metatags"][0]["preview"]
+        elif "snippet" in item:
+            preview = item["snippet"]
+        else:
+            preview = "No preview available."
+        result_list.append({
+            "url": item["link"],
+            "display": item["displayLink"],
+            "title": item["title"],
+            "preview": preview
+        })
+    #links = [item["link"] for item in result["items"]]
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36",
         "Accept-Language": "en-US,en;q=0.9", 
@@ -101,7 +115,7 @@ async def conduct_search(query):
     try:
         async with aiohttp.ClientSession(headers=headers) as session:
             tasks = []
-            for url in links:
+            for url in [item["link"] for item in result["items"]]:
                 tasks.append(asyncio.create_task(scrape(url, session)))
             results = await asyncio.gather(*tasks)
         
@@ -113,23 +127,33 @@ async def conduct_search(query):
         urls = []
         for d in ranked_context:
             url = d["url"]
-            if urls.count(url) < 3:
-                if len(joined_context)+len(d["text"]) > 8000:
-                    ##prompt limit 3097 tokens (4097-1000 for completion)
-                    ##1000 tokens ~ 750 words
-                    break
-                else:
-                    joined_context += d["text"]
+            if len(set(urls)) >= 5:
+                #only want to include five sources
+                break
+            elif len(joined_context)+len(d["text"]) > 8000:
+                ##prompt limit 3097 tokens (4097-1000 for completion)
+                ##1000 tokens ~ 750 words
+                break
+            else:
+                if urls.count(url) < 10:
+                    if url in urls:
+                        reference_number = urls.index(url)+1
+                    else:
+                        reference_number = len(set(urls))+1
+                    joined_context += f"Source {reference_number}:" + d["text"] + "\n"
                     urls.append(url)
         message = [{
             "role": "user", 
-            "content": f"I would like to write about {query}. Summarise the following text, including any relevant dates or figures. Text:\n{joined_context}"
+            "content": f"I would like to write about {query}. Using at least 300 words, summarise the relevant points from the following text, using numerical in-text citation with square brackets, e.g. [x], where necessary. Make sure to include any relevant dates, stats, or figures. Text:\n{joined_context}"
         }]
         completion = turbo_openai_call(message, 800, 0.4, 0.4)
-        return {"result": completion, "urls": list(set(urls))[:5]}
+        
+        sources = [d for d in result_list if d["url"] in list(set(urls))[:5]]
+
+        return {"result": completion, "urls": list(set(urls))[:5], "sources": sources}
     except Exception as e:
         print(e)
-        return {"result": "", "urls": []}
+        return {"result": "", "urls": [], "sources": []}
 
 app = FastAPI()
 
