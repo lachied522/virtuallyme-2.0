@@ -82,7 +82,7 @@ function submitTask(socket) {
         var destination = document.querySelector("[customID='task-output']");
         waiting(destination);
         isWaiting = true;
-       socket.addEventListener("message", function receive(event) {
+        socket.addEventListener("message", function receive(event) {
             if (isWaiting) {
                 destination.textContent = "";
                 clearInterval(waitingInterval);
@@ -96,9 +96,8 @@ function submitTask(socket) {
             } else {
                 this.removeEventListener("message", receive);
                 //reset feedback bar
-                document.querySelector("[customID='task-word-count']").innerHTML = `Word count: ${words}`;
                 var words = destination.textContent.split(" ").length;
-                updateUserWords(userWordCount+words);
+                document.querySelector("[customID='task-word-count']").innerHTML = `Word count: ${words}`;
                 if(uses > -1){
                     uses++;
                     useCountElement.innerHTML = "Monthly uses " + String(uses) + "/5"
@@ -117,15 +116,15 @@ function submitTask(socket) {
             this.removeEventListener("close", handle_close);
         });
         socket.send(JSON.stringify(data));
-    } else {
-        var originalColor = empty[0].style.borderColor;
-        empty[0].style.borderColor = "#FFBEC2";
-        setTimeout(function() {
-            empty[0].style.borderColor = originalColor;
-        }, 1500);
-        return
-    }             
-}
+        } else {
+            var originalColor = empty[0].style.borderColor;
+            empty[0].style.borderColor = "#FFBEC2";
+            setTimeout(function() {
+                empty[0].style.borderColor = originalColor;
+            }, 1500);
+            return
+        }             
+    }
 
 let uses = -1;
 var useCountElement = document.querySelector("[customID='uses-count']");

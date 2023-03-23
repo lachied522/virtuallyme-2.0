@@ -629,7 +629,6 @@ function generateIdeas(socket) {
             isWaiting = false;
             destination.textContent = "There was an error, please try again later. I apologise for the inconvenience.";
             this.removeEventListener("close", handle_close);
-            this.removeEventListener("message", receive);
         });
         socket.send(JSON.stringify(data));
     } else {
@@ -700,7 +699,6 @@ function submitRewrite(socket) {
             isWaiting = false;
             destination.textContent = "There was an error, please try again later. I apologise for the inconvenience.";
             this.removeEventListener("close", handle_close);
-            this.removeEventListener("message", receive);
         });
         socket.send(JSON.stringify(data));
     } else {
@@ -906,7 +904,7 @@ function submitTask(socket) {
             if (response.hasOwnProperty('sources')) {
                 sourcesContainer.querySelectorAll(".source-wrapper").forEach((wrapper, index) => {
                     if(index<response.sources.length){
-                        let source_data = response.sources[index];
+                        var source_data = response.sources[index];
                         wrapper.querySelector(".link").innerHTML = source_data.display;
                         wrapper.querySelector(".source-link").href = source_data.url;
                         wrapper.querySelector(".source-link").target = "_blank";
@@ -932,7 +930,7 @@ function submitTask(socket) {
                     updateUserWords(userWordCount+words);
                     //store task
                     var recentTasksContainer = document.querySelector("#recent-tasks");
-                    storeTask(recentTasksContainer, {"prompt": `Write a(n) ${typeElement.value} about ${topicElement.value}`, "completion": destination.textContent, "sources": []});
+                    storeTask(recentTasksContainer, {"prompt": `Write a(n) ${typeElement.value} about ${topicElement.value}`, "completion": destination.textContent, "sources": sources_data});
                 }
             }
         });

@@ -373,7 +373,6 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 text = data["text"]
                 additional = data["additional"]
-                search = data["search"]
 
                 samples = await get_data(user, job)
 
