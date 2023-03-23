@@ -955,7 +955,7 @@ function submitTask(socket) {
 
 document.addEventListener("DOMContentLoaded", () => {
     pageLoad();
-    socket = new WebSocket('ws://localhost:8000/ws');
+    socket = new WebSocket(WEB_SOCKET_URL);
 
     socket.addEventListener('open', () => {
         //socket.send('Hello World!');
@@ -973,7 +973,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     submitRewrite(socket);
                 }
             } else {
-                socket = new WebSocket('ws://localhost:8000/ws');
+                socket = new WebSocket(WEB_SOCKET_URL);
                 socket.addEventListener("open", () => {
                     if (tasks[index]==="task") {
                         submitTask(socket);
@@ -988,6 +988,7 @@ document.addEventListener("DOMContentLoaded", () => {
     })
 });
 
-const WEB_SERVER_BASE_URL = "http://127.0.0.1:8000"
+const WEB_SERVER_BASE_URL = "https://virtuallyme2-0.onrender.com"
+const WEB_SOCKET_URL = "wss://virtuallyme2-0.onrender.com/ws"
 let isWaiting = false;
 
