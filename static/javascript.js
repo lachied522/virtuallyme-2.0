@@ -215,11 +215,14 @@ function storeTask(tasksContainer, data){
             feedbackAnimation(taskClone.querySelector(".feedback-bar"), "negative");
         }
     } else {
+        let completion = taskClone.querySelector("[customID='tasks-body']").innerHTML;
         taskClone.querySelector(".feedback-button.positive").addEventListener("click", () => {
             feedbackAnimation(taskClone.querySelector(".feedback-bar"), "positive");
+            sendFeedback(completion, "positive");
         });
         taskClone.querySelector(".feedback-button.negative").addEventListener("click", () => {
             feedbackAnimation(taskClone.querySelector(".feedback-bar"), "negative");
+            sendFeedback(completion, "negative");
         });
     }
     taskClone.style.display = "block";
@@ -244,6 +247,13 @@ function getUser(counter = 0){
         })
         .then(response => response.json())
         .then(data => {
+            //store user description and about data
+            if(data.description.length>0){
+                let descriptionWrapper = document.querySelector(".description-wrapper");
+                descriptionWrapper.querySelector("text-300").innerHTML = data.description;
+                descriptionWrapper.style.display = "block";
+                document.querySelector(".description-empty-text").style.display = "none";
+            }
             //store task data
             for(let i = 0; i < data.tasks.length; i++){
                 storeTask(document.querySelector("#recent-tasks"), data.tasks[i]);
@@ -272,7 +282,7 @@ function getUser(counter = 0){
                 updateJobWords(newJobElement, data.user[i].word_count);
                 newJobElement.setAttribute("saved", "true");
             }
-            if(data.user.length>0){
+            if (data.user.length>0) {
                 //hide welcome popup
                 document.querySelector(".welcome-popup").style.display = "none"; 
             }
@@ -281,7 +291,7 @@ function getUser(counter = 0){
         .catch(error => {
             console.log(error);
             setTimeout(() => {
-                //getUser(counter+1);
+                getUser(counter+1);
             }, 30);
         })
     }
@@ -719,35 +729,21 @@ function searchToggle(searchElement){
     }
 }
 
-function sendFeedback(feedback){
+function sendFeedback(completion, feedback){
     const url = "https://virtuallyme.onrender.com/handle_feedback";
     //get recent task
-    var recentTasksContainer = document.querySelector("[customID='recent-tasks']");
-    var prompt = recentTasksContainer.querySelectorAll("[customID='tasks-header']")[0].innerHTML;
-    var completion = recentTasksContainer.querySelectorAll("[customID='tasks-body']")[0].innerHTML;
-    var form = document.querySelector("[customID='submit-task']");
-    var jobIndex = form.querySelector("[customID='user-job-list']").selectedIndex-1;
-    if(jobIndex<0||jobIndex>userJobs.length){
-        //pass
-    } else {
-        var jobID = document.querySelectorAll("[customID='job-container']")[jobIndex].getAttribute("jobID");
-        var data = {
-            "member_id": member,
-            "job_id": jobID,
-            "feedback": feedback, 
-            "prompt": prompt, 
-            "completion": completion
-        }
-        fetch(url, {
-            method: "POST",
-            body: JSON.stringify(data),
-            headers: {
-                'Content-Type': 'application/json'
-            },
-        });
+    var data = {
+        "member_id": member,
+        "feedback": feedback, 
+        "completion": completion
     }
-    document.querySelector(".feedback-bar").style.display = "none";
-    document.querySelector(".feedback-text").style.display = "block";
+    fetch(url, {
+        method: "POST",
+        body: JSON.stringify(data),
+        headers: {
+            'Content-Type': 'application/json'
+        },
+    });
 }
 
 function pageLoad(){
@@ -783,12 +779,27 @@ function pageLoad(){
         });
         searchElement.setAttribute("on", "false");
     });
-    //add feedback button functionality
-    document.querySelector("[customID='positive-feedback-button']").addEventListener("click", function() {
-        sendFeedback('positive');
+    //add feedback functionality for new task
+    let feedbackBar = document.querySelector(".feedback-bar");
+    feedbackBar.querySelector("[customID='positive-feedback-button']").addEventListener("click", () => {
+        feedbackBar.style.display = "none";
+        document.querySelector(".feedback-text").style.display = "block";
     });
-    document.querySelector("[customID='negative-feedback-button']").addEventListener("click", function() {
-        sendFeedback('negative');
+    feedbackBar.querySelector("[customID='negative-feedback-button']").addEventListener("click", () => {
+        feedbackBar.style.display = "none";
+        document.querySelector(".feedback-text").style.display = "block";
+    });
+    
+    //add feedback button functionality for stored tasks
+    document.querySelectorAll(".task-feedback-bar").forEach(element => {
+        element.querySelector("[customID='positive-feedback-button']").addEventListener("click", function() {
+            sendFeedback('positive');
+        })
+    });
+    document.querySelectorAll("[customID='negative-feedback-button']").forEach(element => {
+        element.addEventListener("click", function() {
+            sendFeedback('negative');
+        })
     });
     document.querySelectorAll("[customID='job-container']").forEach(jobElement => {
         uploadBox = jobElement.querySelector(".upload-sample-box");
@@ -894,6 +905,7 @@ function submitTask(socket) {
         waiting(destination);
         isWaiting = true;
         socket.addEventListener("message", function receive(event) {
+            var source_data = [];
             if (isWaiting) {
                 destination.textContent = "";
                 clearInterval(waitingInterval);
@@ -904,7 +916,7 @@ function submitTask(socket) {
             if (response.hasOwnProperty('sources')) {
                 sourcesContainer.querySelectorAll(".source-wrapper").forEach((wrapper, index) => {
                     if(index<response.sources.length){
-                        var source_data = response.sources[index];
+                        source_data = response.sources[index];
                         wrapper.querySelector(".link").innerHTML = source_data.display;
                         wrapper.querySelector(".source-link").href = source_data.url;
                         wrapper.querySelector(".source-link").target = "_blank";
@@ -930,7 +942,7 @@ function submitTask(socket) {
                     updateUserWords(userWordCount+words);
                     //store task
                     var recentTasksContainer = document.querySelector("#recent-tasks");
-                    storeTask(recentTasksContainer, {"prompt": `Write a(n) ${typeElement.value} about ${topicElement.value}`, "completion": destination.textContent, "sources": sources_data});
+                    storeTask(recentTasksContainer, {"prompt": `Write a(n) ${typeElement.value} about ${topicElement.value}`, "completion": destination.textContent, "sources": source_data});
                 }
             }
         });
@@ -985,6 +997,17 @@ document.addEventListener("DOMContentLoaded", () => {
         })
     })
 });
+
+setInterval(() => {
+    //check if job is saved, save if not
+    document.querySelectorAll("[customID='job-container']").forEach(jobElement => {
+        if(jobElement.hasAttribute("saved")){
+            if(jobElement.getAttribute("saved")==="false"){
+                syncJob(jobElement);
+            }
+        }
+    })
+}, 60000)
 
 const WEB_SERVER_BASE_URL = "https://virtuallyme2-0.onrender.com"
 const WEB_SOCKET_URL = "wss://virtuallyme2-0.onrender.com/ws"

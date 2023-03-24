@@ -270,7 +270,10 @@ async def get_data(member_id, job_id=-1):
 
     return json.loads(data)["samples"]
 
-async def store_task(member_id, category, prompt, completion, sources=[]):
+async def store_task(member_id, category, prompt, completion, sources=[], job_id=None):
+    """
+    :param job_id: job for which task was created
+    """
     headers = {"member_id": member_id}
     async with aiohttp.ClientSession(headers=headers) as session:
         url = f"{DB_BASE_URL}/store_task"
@@ -279,7 +282,8 @@ async def store_task(member_id, category, prompt, completion, sources=[]):
             "category": category,
             "prompt": prompt,
             "completion": completion,
-            "sources": sources
+            "sources": sources,
+            "job_id": job_id
         }
         async with session.post(url, json=data) as response:
             return await response.text()
@@ -369,7 +373,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
             if data["category"]=="rewrite":
                 user = data["member_id"]
-                job = data["job_id"]
+                job = int(data["job_id"])
 
                 text = data["text"]
                 additional = data["additional"]
@@ -377,7 +381,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 samples = await get_data(user, job)
 
                 maxlength = 2000-len(additional.split()) #prompt limit 3097 tokens (4097-1000 for completion)
-                messages = construct_messages(samples, maxlength, topic)
+                messages = construct_messages(samples, maxlength, text)
 
                 if len([d for d in messages if d["role"]=="user"]) > 0:
                     messages.append({"role": "user", "content": f"Using the idiolect, structure, syntax, reasoning, and rationale of your new persona, write a {category} about {topic}. {additional} Do not mention this prompt in your response."})
@@ -409,6 +413,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 #define prompt to be stored in DB
                 prompt = f"Generate content ideas for my {category} about {topic}"
                 sources = []
+                job = None
             
             response = openai.ChatCompletion.create(
                 model="gpt-3.5-turbo",
@@ -432,7 +437,7 @@ async def websocket_endpoint(websocket: WebSocket):
             await websocket.send_json({"message": "[END MESSAGE]"})
             #store task in DB
             completion = ''.join(message_list)
-            await store_task(user, data["category"], prompt, completion)
+            await store_task(user, data["category"], prompt, completion, job)
     except WebSocketDisconnect:
         pass
     except ValueError as e:
