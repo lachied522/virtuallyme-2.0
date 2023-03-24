@@ -282,7 +282,7 @@ function getUser(counter = 0){
                 updateJobWords(newJobElement, data.user[i].word_count);
                 newJobElement.setAttribute("saved", "true");
             }
-            if (data.user.length>0) {
+            if (data.user.length>0||data.words>0) {
                 //hide welcome popup
                 document.querySelector(".welcome-popup").style.display = "none"; 
             }

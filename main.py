@@ -437,7 +437,7 @@ async def websocket_endpoint(websocket: WebSocket):
             await websocket.send_json({"message": "[END MESSAGE]"})
             #store task in DB
             completion = ''.join(message_list)
-            await store_task(user, data["category"], prompt, completion, job)
+            await store_task(user, data["category"], prompt, completion, sources, job)
     except WebSocketDisconnect:
         pass
     except ValueError as e:
