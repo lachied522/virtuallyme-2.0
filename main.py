@@ -359,7 +359,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     messages.append({"role": "system", "content": f"You may use following context to answer the next question.\nContext: {context}"})
 
                 if len([d for d in messages if d["role"]=="user"]) > 0:
-                    messages.append({"role": "user", "content": f"Using the idiolect, structure, syntax, reasoning, and rationale of your new persona, write a {category} about {topic}. {additional} Do not mention this prompt in your response."})
+                    messages.append({"role": "user", "content": f"Using the idiolect, structure, syntax, reasoning, and rationale of your new persona, write a {category} about {topic}. Do not mention this prompt in your response. {additional}"})
                     logit_bias = get_logit_bias([d["content"] for d in messages if d["role"]=="assistant"])
                 else:
                     #no user samples
@@ -369,6 +369,44 @@ async def websocket_endpoint(websocket: WebSocket):
             
                 max_tokens, temperature, presence_penalty = 1000, 1.2, 0.3
                 prompt = f"Write a(n) {category} about {topic}." 
+                sources = search_result["sources"]
+
+            if data["category"]=="question":
+                user = data["member_id"]
+
+                question = data["question"]
+                additional = data["additional"]
+                search = data["search"]=="true"
+
+                #search web and get user data simultaneously 
+                get_user_task = asyncio.create_task(get_data(user, job))
+                              
+                if search:
+                    search_task = asyncio.create_task(conduct_search(topic))
+                    search_result = await search_task
+                else:
+                    search_result = {"result": "", "sources": []}
+
+                samples = await get_user_task
+
+                maxlength = 2000-len(additional.split())-len(search_result["result"].split()) #prompt limit 3097 tokens (4097-1000 for completion)
+                messages = construct_messages(samples, maxlength, topic)
+
+                if search and search_result["result"] != "":
+                    context = search_result["result"]
+                    messages.append({"role": "system", "content": f"You may use following context to answer the next question.\nContext: {context}"})
+
+                if len([d for d in messages if d["role"]=="user"]) > 0:
+                    messages.append({"role": "user", "content": f"Now I want you to answer the following question using the idiolect, structure, syntax, reasoning, and rationale of your new persona. Do not mention this prompt in your response. {additional}\nQuestion: {question}"})
+                    logit_bias = get_logit_bias([d["content"] for d in messages if d["role"]=="assistant"])
+                else:
+                    #no user samples
+                    messages = [d for d in messages if d["role"]!="system"]
+                    messages.append({"role": "user", "content": f"Answer the following question using a high degree of variation in your structure, syntax, and semantics.\nQuestion: {question}"})
+                    logit_bias = {}
+            
+                max_tokens, temperature, presence_penalty = 1000, 1.2, 0.3
+                prompt = f"{question}?" 
                 sources = search_result["sources"]
 
             if data["category"]=="rewrite":
@@ -384,12 +422,12 @@ async def websocket_endpoint(websocket: WebSocket):
                 messages = construct_messages(samples, maxlength, text)
 
                 if len([d for d in messages if d["role"]=="user"]) > 0:
-                    messages.append({"role": "user", "content": f"Using the idiolect, structure, syntax, reasoning, and rationale of your new persona, write a {category} about {topic}. {additional} Do not mention this prompt in your response."})
+                    messages.append({"role": "user", "content": f"Now I want you to rewrite the following text using the structure, syntax, word choices, reasoning, and rationale of your new persona. {additional} Text: {text}"})
                     logit_bias = get_logit_bias([d["content"] for d in messages if d["role"]=="assistant"])
                 else:
                     #no user samples
                     messages = [d for d in messages if d["role"]!="system"]
-                    messages.append({"role": "user", "content": f"Using a high degree of variation in your structure, syntax, and semantics, write a {category} about {topic}. {additional}"})
+                    messages.append({"role": "user", "content": f"Rewrite the following text using a high degree of variation in your structure, syntax, and semantics. {additional} Text: {text}"})
                     logit_bias = {}
             
                 max_tokens, temperature, presence_penalty = 1000, 1.2, 0

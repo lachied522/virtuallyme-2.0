@@ -256,15 +256,39 @@ function getUser(counter = 0){
             }
             //store task data
             for(let i = 0; i < data.tasks.length; i++){
-                storeTask(document.querySelector("#recent-tasks"), data.tasks[i]);
+                if (i<5) {
+                    storeTask(document.querySelector("#recent-tasks"), data.tasks[i]);
+                }
+                if (data.tasks[i].feedback.length>0) {
+                    storeTask(document.querySelector("#saved-tasks"), data.tasks[i]);
+                }
+            }
+            //store questions data
+            for(let i=0; i < data.questions.length; i++){
+                if (i<5) {
+                    storeTask(document.querySelector("#recent-questions"), data.questions[i]);
+                }
+                if (data.questions[i].feedback.length>0) {
+                    storeTask(document.querySelector("#saved-questions"), data.questions[i]);
+                }
             }
             //store ideas data
             for(let i=0; i < data.ideas.length; i++){
-                storeTask(document.querySelector("#recent-ideas"), data.ideas[i]);
+                if (i<5) {
+                    storeTask(document.querySelector("#recent-ideas"), data.ideas[i]);
+                }
+                if (data.ideas[i].feedback.length>0) {
+                    storeTask(document.querySelector("#saved-ideas"), data.ideas[i]);
+                }
             }
             //store rewrite data
             for(let i = 0; i < data.rewrites.length; i++){
-                storeTask(document.querySelector("#recent-rewrites"), data.rewrites[i]);
+                if (i<5) {
+                    storeTask(document.querySelector("#recent-rewrites"), data.rewrites[i]);
+                }
+                if (data.rewrites[i].feedback.length>0) {
+                    storeTask(document.querySelector("#saved-rewrites"), data.rewrites[i]);
+                }
             }
             //update user word count
             updateUserWords(data.words);
@@ -899,7 +923,7 @@ function submitTask(socket) {
     if(empty.length==0){
         document.querySelector("[customID='task-word-count']").innerHTML = `Word count __`;
 
-        var sourcesContainer = document.querySelector(".sources-container");
+        var sourcesContainer = document.querySelector("[customID='task-sources-container']");
         if(searchElement.getAttribute("on")==="false"){
             sourcesContainer.style.display = "none";
         }
@@ -967,6 +991,110 @@ function submitTask(socket) {
     }             
 }
 
+function submitQuestion(socket) {
+    if(isWaiting){
+        //if still waiting, do nothing
+        return
+    } else if(userWordCount > userMonthlyWords){
+        document.querySelector("[customID='task-output']").textContent = "You have reached your maximum word limit for this month.\n\nUpgrade your plan to increase your limit."
+        return
+    }
+    var form = document.querySelector("[customID='submit-question']");
+    var questionElement = form.querySelector("[customInput='question']");
+    var searchElement = form.querySelector("[customID='search-toggle']");
+    //get ID of selected job
+    var jobIndex = form.querySelector("[customID='user-job-list']").selectedIndex-1;
+    if(jobIndex<=0||jobIndex>userJobs.length){
+        var jobID = -1
+    } else {
+        var jobID = document.querySelectorAll("[customID='job-container']")[jobIndex].getAttribute("jobID");
+    }
+    //check if either typeElement or topic are missing
+    var empty = [];
+    if(questionElement.value===""){
+        empty.push(questionElement);
+    }
+    var additionalElement = form.querySelector("[customInput='additional']");
+    const data = {
+        "name": userName,
+        "member_id": member,
+        "category": "question",
+        "question": questionElement.value, 
+        "additional": additionalElement.value,
+        "search": searchElement.getAttribute("on")
+    };
+    //if neither type or topic element is missing
+    if(empty.length==0){
+        document.querySelector("[customID='question-word-count']").innerHTML = `Word count __`;
+
+        var sourcesContainer = document.querySelector("[customID='question-sources-container']");
+        if(searchElement.getAttribute("on")==="false"){
+            sourcesContainer.style.display = "none";
+        }
+
+        var destination = document.querySelector("[customID='question-output']");
+        waiting(destination);
+        isWaiting = true;
+        socket.addEventListener("message", function receive(event) {
+            var source_data = [];
+            if (isWaiting) {
+                destination.textContent = "";
+                clearInterval(waitingInterval);
+                isWaiting = false;
+            }
+            let response = JSON.parse(event.data);
+            //handle sources
+            if (response.hasOwnProperty('sources')) {
+                sourcesContainer.style.display = "flex"
+                sourcesContainer.querySelectorAll(".source-wrapper").forEach((wrapper, index) => {
+                    if(index<response.sources.length){
+                        source_data = response.sources[index];
+                        wrapper.querySelector(".link").innerHTML = source_data.display;
+                        wrapper.querySelector(".source-link").href = source_data.url;
+                        wrapper.querySelector(".source-link").target = "_blank";
+                        wrapper.querySelector(".sources-text.title").innerHTML = source_data.title;
+                        wrapper.querySelector(".sources-text").innerHTML = source_data.preview;
+                        wrapper.style.display = "block";
+                    } else {
+                        wrapper.style.display = "none";
+                    }
+                })
+            } else {
+                let data = response.message;
+                if (data!=="[END MESSAGE]") {
+                    destination.textContent += data;
+                } else {
+                    this.removeEventListener("message", receive);
+                    //reset feedback bar
+                    document.querySelector(".feedback-bar").style.display = "flex";
+                    document.querySelector(".feedback-text").style.display = "none";
+                    //update user words
+                    var words = destination.textContent.split(" ").length;
+                    document.querySelector("[customID='task-word-count']").innerHTML = `Word count: ${words}`;
+                    updateUserWords(userWordCount+words);
+                    //store task
+                    var recentTasksContainer = document.querySelector("#recent-questions");
+                    storeTask(recentTasksContainer, {"prompt": questionElement.value, "completion": destination.textContent, "sources": source_data});
+                }
+            }
+        });
+        socket.addEventListener("close", function handle_close() {
+            clearInterval(waitingInterval);
+            isWaiting = false;
+            destination.textContent = "There was an error, please try again later. I apologise for the inconvenience.";
+            this.removeEventListener("close", handle_close);
+        });
+        socket.send(JSON.stringify(data));
+    } else {
+        var originalColor = empty[0].style.borderColor;
+        empty[0].style.borderColor = "#FFBEC2";
+        setTimeout(function() {
+            empty[0].style.borderColor = originalColor;
+        }, 1500);
+        return
+    }             
+}
+
 document.addEventListener("DOMContentLoaded", () => {
     pageLoad();
     socket = new WebSocket(WEB_SOCKET_URL);
@@ -975,7 +1103,7 @@ document.addEventListener("DOMContentLoaded", () => {
         //socket.send('Hello World!');
     });
 
-    let tasks = ["task", "idea", "rewrite"];
+    let tasks = ["task", "question", "rewrite", "idea"];
     document.querySelectorAll(".task-wrapper").forEach((wrapper, index) => {
         wrapper.querySelector(".generate-button").addEventListener("click", () => {
             if(socket.readyState !== WebSocket.CLOSED){
