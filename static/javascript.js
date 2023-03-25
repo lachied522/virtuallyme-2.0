@@ -250,7 +250,7 @@ function getUser(counter = 0){
             //store user description and about data
             if(data.description.length>0){
                 let descriptionWrapper = document.querySelector(".description-wrapper");
-                descriptionWrapper.querySelector("text-300").innerHTML = data.description;
+                descriptionWrapper.querySelector(".text-300").innerHTML = data.description;
                 descriptionWrapper.style.display = "block";
                 document.querySelector(".description-empty-text").style.display = "none";
             }
