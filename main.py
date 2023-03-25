@@ -382,7 +382,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 get_user_task = asyncio.create_task(get_data(user, job))
                               
                 if search:
-                    search_task = asyncio.create_task(conduct_search(topic))
+                    search_task = asyncio.create_task(conduct_search(question))
                     search_result = await search_task
                 else:
                     search_result = {"result": "", "sources": []}
@@ -390,7 +390,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 samples = await get_user_task
 
                 maxlength = 2000-len(additional.split())-len(search_result["result"].split()) #prompt limit 3097 tokens (4097-1000 for completion)
-                messages = construct_messages(samples, maxlength, topic)
+                messages = construct_messages(samples, maxlength, question)
 
                 if search and search_result["result"] != "":
                     context = search_result["result"]
