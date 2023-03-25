@@ -379,7 +379,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 search = data["search"]=="true"
 
                 #search web and get user data simultaneously 
-                get_user_task = asyncio.create_task(get_data(user, job))
+                get_user_task = asyncio.create_task(get_data(user))
                               
                 if search:
                     search_task = asyncio.create_task(conduct_search(question))

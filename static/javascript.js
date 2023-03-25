@@ -258,8 +258,8 @@ function getUser(counter = 0){
             for(let i = 0; i < data.tasks.length; i++){
                 if (i<5) {
                     storeTask(document.querySelector("#recent-tasks"), data.tasks[i]);
-                }
-                if (data.tasks[i].feedback.length>0) {
+                } 
+                if (data.tasks[i].feedback) {
                     storeTask(document.querySelector("#saved-tasks"), data.tasks[i]);
                 }
             }
@@ -268,7 +268,7 @@ function getUser(counter = 0){
                 if (i<5) {
                     storeTask(document.querySelector("#recent-questions"), data.questions[i]);
                 }
-                if (data.questions[i].feedback.length>0) {
+                if (data.questions[i].feedback) {
                     storeTask(document.querySelector("#saved-questions"), data.questions[i]);
                 }
             }
@@ -277,7 +277,7 @@ function getUser(counter = 0){
                 if (i<5) {
                     storeTask(document.querySelector("#recent-ideas"), data.ideas[i]);
                 }
-                if (data.ideas[i].feedback.length>0) {
+                if (data.ideas[i].feedback) {
                     storeTask(document.querySelector("#saved-ideas"), data.ideas[i]);
                 }
             }
@@ -286,7 +286,7 @@ function getUser(counter = 0){
                 if (i<5) {
                     storeTask(document.querySelector("#recent-rewrites"), data.rewrites[i]);
                 }
-                if (data.rewrites[i].feedback.length>0) {
+                if (data.rewrites[i].feedback) {
                     storeTask(document.querySelector("#saved-rewrites"), data.rewrites[i]);
                 }
             }
@@ -1113,6 +1113,8 @@ document.addEventListener("DOMContentLoaded", () => {
                     generateIdeas(socket);
                 } else if (tasks[index]==="rewrite") {
                     submitRewrite(socket);
+                } else if (tasks[index]=="question") {
+                    submitQuestion(socket);
                 }
             } else {
                 socket = new WebSocket(WEB_SOCKET_URL);
@@ -1123,6 +1125,8 @@ document.addEventListener("DOMContentLoaded", () => {
                         generateIdeas(socket);
                     } else if (tasks[index]==="rewrite") {
                         submitRewrite(socket);
+                    } else if (tasks[index]=="question") {
+                        submitQuestion(socket);
                     }
                 });
             }
