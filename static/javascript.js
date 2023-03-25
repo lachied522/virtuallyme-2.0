@@ -361,8 +361,13 @@ function createJob(counter = 0) {
     } else {
         const url = "https://virtuallyme.onrender.com/create_job"
         var form = document.querySelector("[customID='create-new-job']");
-        newJobName = form.querySelector("[customInput='new-job-name']").value;
-
+        
+        if (form.querySelector("[customInput='new-job-name']").value.length > 0) {
+            var newJobName = form.querySelector("[customInput='new-job-name']").value;
+        } else {
+            var newJobName = "My Job";
+        }
+        
         var popupWrapper = document.querySelector(".popup-wrapper.create-job")
         var createButton = popupWrapper.querySelector("[customID='create-job-button']");
         var savingButton = popupWrapper.querySelector(".btn-secondary.small.saving-button")
@@ -897,8 +902,6 @@ function submitTask(socket) {
         var sourcesContainer = document.querySelector(".sources-container");
         if(searchElement.getAttribute("on")==="false"){
             sourcesContainer.style.display = "none";
-        } else {
-            sourcesContainer.style.display = "flex";
         }
 
         var destination = document.querySelector("[customID='task-output']");
@@ -914,6 +917,7 @@ function submitTask(socket) {
             let response = JSON.parse(event.data);
             //handle sources
             if (response.hasOwnProperty('sources')) {
+                sourcesContainer.style.display = "flex"
                 sourcesContainer.querySelectorAll(".source-wrapper").forEach((wrapper, index) => {
                     if(index<response.sources.length){
                         source_data = response.sources[index];
