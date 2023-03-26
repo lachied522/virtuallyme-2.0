@@ -115,6 +115,14 @@ function feedbackAnimation(feedbackBar, feedback){
   }
 }
 
+function removeFeedbackAnimation(feedbackBar){
+    feedbackBar.querySelectorAll(".feedback-button").forEach(btn => {
+        btn.style.display = "none";
+    })
+    feedbackBar.querySelector(".feedback-button.positive").style.display = "flex";
+    feedbackBar.querySelector(".feedback-button.negative").style.display = "flex";
+  }
+
 function updateUserWords(value){
     userWordCount = value;
     document.querySelectorAll("[customID='user-word-count']").forEach(element => {
@@ -205,34 +213,36 @@ function storeTask(tasksContainer, data){
             }
         })
     }
-    taskClone.querySelector(".features-tasks-title-container").addEventListener("click", () => {
-        featuresTaskOpen(taskClone);
-    });
     if(data.feedback){
         if(data.feedback==="positive"){
             feedbackAnimation(taskClone.querySelector(".feedback-bar"), "positive");
         } else if(data.feedback==="negative") {
             feedbackAnimation(taskClone.querySelector(".feedback-bar"), "negative");
         }
-    } else {
-        let completion = taskClone.querySelector("[customID='tasks-body']").innerHTML;
-        taskClone.querySelector(".feedback-button.positive").addEventListener("click", () => {
-            feedbackAnimation(taskClone.querySelector(".feedback-bar"), "positive");
-            sendFeedback(completion, "positive");
-        });
-        taskClone.querySelector(".feedback-button.negative").addEventListener("click", () => {
-            feedbackAnimation(taskClone.querySelector(".feedback-bar"), "negative");
-            sendFeedback(completion, "negative");
-        });
     }
+    taskClone.querySelector(".features-tasks-title-container").addEventListener("click", () => {
+        featuresTaskOpen(taskClone);
+    });
+    let completion = taskClone.querySelector("[customID='tasks-body']").innerHTML;
+    taskClone.querySelector(".feedback-button.positive").addEventListener("click", () => {
+        feedbackAnimation(taskClone.querySelector(".feedback-bar"), "positive");
+        sendFeedback(completion, "positive");
+    });
+    taskClone.querySelector(".feedback-button.negative").addEventListener("click", () => {
+        feedbackAnimation(taskClone.querySelector(".feedback-bar"), "negative");
+        sendFeedback(completion, "negative");
+    });
+    taskClone.querySelector(".feedback-button.positive.clicked").addEventListener("click", () => {
+        removeFeedbackAnimation(taskClone.querySelector(".feedback-bar"));
+        sendFeedback(completion, null);
+    });
+    taskClone.querySelector(".feedback-button.negative.clicked").addEventListener("click", () => {
+        removeFeedbackAnimation(taskClone.querySelector(".feedback-bar"));
+        sendFeedback(completion, null);
+    });
     taskClone.style.display = "block";
     module.after(taskClone);
-    //tasksContainer.prepend(taskClone);
     tasksContainer.querySelector("[customID='empty-text']").style.display = "none";
-    var taskLength = tasksContainer.querySelectorAll(".module").length;
-    if(taskLength-1>5){
-        tasksContainer.querySelectorAll(".module")[taskLength-1].remove();
-    }
   }
 
 
@@ -660,7 +670,11 @@ function generateIdeas(socket) {
                 updateUserWords(userWordCount+words);
                 //store task
                 var recentIdeasContainer = document.querySelector("#recent-ideas");
-                storeTask(recentIdeasContainer, {"prompt": `Generate content ideas for my ${typeElement.value}`, "completion": destination.textContent.split()});  
+                storeTask(recentIdeasContainer, {"prompt": `Generate content ideas for my ${typeElement.value}`, "completion": destination.textContent.split()}); 
+                var taskLength = recentIdeasContainer.querySelectorAll(".module").length;
+                if(taskLength-1>5){
+                    recentIdeasContainer.querySelectorAll(".module")[taskLength-1].remove();
+                } 
             }
         });
         socket.addEventListener("close", function handle_close()  {
@@ -730,7 +744,11 @@ function submitRewrite(socket) {
                 updateUserWords(userWordCount+words);
                 //store task
                 var rewritesContainer = document.querySelector("#recent-rewrites");
-                storeTask(rewritesContainer, {"prompt": `Rewrite the following: ${textElement.value.slice(0, 120)}`, "completion": destination.textContent});         
+                storeTask(rewritesContainer, {"prompt": `Rewrite the following: ${textElement.value.slice(0, 120)}`, "completion": destination.textContent});
+                var taskLength = rewritesContainer.querySelectorAll(".module").length;
+                if(taskLength-1>5){
+                    rewritesContainer.querySelectorAll(".module")[taskLength-1].remove();
+                } 
             }
         });
         socket.addEventListener("close", function handle_close()  {
@@ -971,6 +989,10 @@ function submitTask(socket) {
                     //store task
                     var recentTasksContainer = document.querySelector("#recent-tasks");
                     storeTask(recentTasksContainer, {"prompt": `Write a(n) ${typeElement.value} about ${topicElement.value}`, "completion": destination.textContent, "sources": source_data});
+                    var taskLength = recentTasksContainer.querySelectorAll(".module").length;
+                    if(taskLength-1>5){
+                        recentTasksContainer.querySelectorAll(".module")[taskLength-1].remove();
+                    } 
                 }
             }
         });
@@ -1073,8 +1095,12 @@ function submitQuestion(socket) {
                     document.querySelector("[customID='task-word-count']").innerHTML = `Word count: ${words}`;
                     updateUserWords(userWordCount+words);
                     //store task
-                    var recentTasksContainer = document.querySelector("#recent-questions");
-                    storeTask(recentTasksContainer, {"prompt": questionElement.value, "completion": destination.textContent, "sources": source_data});
+                    var recentQuestionContainer = document.querySelector("#recent-questions");
+                    storeTask(recentQuestionContainer, {"prompt": questionElement.value, "completion": destination.textContent, "sources": source_data});
+                    var taskLength = recentQuestionContainer.querySelectorAll(".module").length;
+                    if(taskLength-1>5){
+                        recentQuestionContainer.querySelectorAll(".module")[taskLength-1].remove();
+                    } 
                 }
             }
         });

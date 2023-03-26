@@ -373,6 +373,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
             if data["category"]=="question":
                 user = data["member_id"]
+                job = None
 
                 question = data["question"]
                 additional = data["additional"]
