@@ -1092,7 +1092,7 @@ function submitQuestion(socket) {
                     document.querySelector(".feedback-text").style.display = "none";
                     //update user words
                     var words = destination.textContent.split(" ").length;
-                    document.querySelector("[customID='task-word-count']").innerHTML = `Word count: ${words}`;
+                    document.querySelector("[customID='question-word-count']").innerHTML = `Word count: ${words}`;
                     updateUserWords(userWordCount+words);
                     //store task
                     var recentQuestionContainer = document.querySelector("#recent-questions");
