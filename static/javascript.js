@@ -121,7 +121,31 @@ function removeFeedbackAnimation(feedbackBar){
     })
     feedbackBar.querySelector(".feedback-button.positive").style.display = "flex";
     feedbackBar.querySelector(".feedback-button.negative").style.display = "flex";
-  }
+}
+
+function showBanner(banner) {
+    banner.style.display = "block";
+
+    banner.querySelector("alert-banner-padding").animate([
+        { opacity: '0' },
+        { opacity: '1' }
+    ], {
+        duration: 300,
+        easing: 'ease'
+    })
+
+    banner.animate([
+        { height: '0', opacity: '0' },
+        { height: 'auto', opacity: '1' }
+    ], {
+        duration: 300,
+        easing: 'ease'
+    })
+
+    setTimeout(() => {
+        banner.querySelector(".alert-banner-close-icon").click();
+    }, 5000);
+}
 
 function updateUserWords(value){
     userWordCount = value;
@@ -501,8 +525,14 @@ function uploadFiles(jobElement, files) {
         var currentWords = parseInt(wordCountElement.innerHTML.split("/")[0]);
         var newWords = 0;
         for(let i=0; i<data.texts.length; i++){
-            samplesGrid.appendChild(newSample(jobElement, sampleWrapper, data.texts[i]));
-            newWords += data.texts[i].length;
+            if (data.texts[i]==="Unsupported filetype") {
+                showBanner(document.querySelector(".banner-wrapper.unsupported-filetype"));
+            } else if (data.texts[i].includes("Could not read file ")) {
+                showBanner(document.querySelector(".banner-wrapper.error-reading-file"));
+            } else {
+                samplesGrid.appendChild(newSample(jobElement, sampleWrapper, data.texts[i]));
+                newWords += data.texts[i].length;
+            }
         }
         updateJobWords(jobElement, currentWords+newWords);
         jobElement.querySelector(".loading-container").style.display = "none";
@@ -1174,7 +1204,6 @@ setInterval(() => {
 }, 60000)
 
 const WEB_SERVER_BASE_URL = "https://virtuallyme2-0.onrender.com"
-//const WEB_SOCKET_URL = "wss://virtuallyme2-0.onrender.com/ws"
-const WEB_SOCKET_URL = "ws://127.0.0.1:8000/ws"
+const WEB_SOCKET_URL = "wss://virtuallyme2-0.onrender.com/ws"
 let isWaiting = false;
 
