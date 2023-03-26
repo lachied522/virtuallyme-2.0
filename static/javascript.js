@@ -949,51 +949,53 @@ function submitTask(socket) {
         var destination = document.querySelector("[customID='task-output']");
         waiting(destination);
         isWaiting = true;
+        var source_data = [];
         socket.addEventListener("message", function receive(event) {
-            var source_data = [];
             if (isWaiting) {
                 destination.textContent = "";
                 clearInterval(waitingInterval);
                 isWaiting = false;
             }
             let response = JSON.parse(event.data);
-            //handle sources
-            if (response.hasOwnProperty('sources')) {
-                sourcesContainer.style.display = "flex"
-                sourcesContainer.querySelectorAll(".source-wrapper").forEach((wrapper, index) => {
-                    if(index<response.sources.length){
-                        source_data = response.sources[index];
-                        wrapper.querySelector(".link").innerHTML = source_data.display;
-                        wrapper.querySelector(".source-link").href = source_data.url;
-                        wrapper.querySelector(".source-link").target = "_blank";
-                        wrapper.querySelector(".sources-text.title").innerHTML = source_data.title;
-                        wrapper.querySelector(".sources-text").innerHTML = source_data.preview;
-                        wrapper.style.display = "block";
-                    } else {
-                        wrapper.style.display = "none";
-                    }
-                })
+            let data = response.message;
+            if (data!=="[END MESSAGE]") {
+                destination.textContent += data;
             } else {
-                let data = response.message;
-                if (data!=="[END MESSAGE]") {
-                    destination.textContent += data;
+                this.removeEventListener("message", receive);
+                //reset feedback bar
+                document.querySelector(".feedback-bar").style.display = "flex";
+                document.querySelector(".feedback-text").style.display = "none";
+                //update user words
+                var words = destination.textContent.split(" ").length;
+                document.querySelector("[customID='task-word-count']").innerHTML = `Word count: ${words}`;
+                updateUserWords(userWordCount+words);
+                //store task
+                var recentTasksContainer = document.querySelector("#recent-tasks");
+                if (response.hasOwnProperty('sources')) {
+                    //handle sources
+                    const sources = response.sources;
+                    sourcesContainer.style.display = "flex"
+                    sourcesContainer.querySelectorAll(".source-wrapper").forEach((wrapper, index) => {
+                        if(index<response.sources.length){
+                            source_data = response.sources[index];
+                            wrapper.querySelector(".link").innerHTML = source_data.display;
+                            wrapper.querySelector(".source-link").href = source_data.url;
+                            wrapper.querySelector(".source-link").target = "_blank";
+                            wrapper.querySelector(".sources-text.title").innerHTML = source_data.title;
+                            wrapper.querySelector(".sources-text").innerHTML = source_data.preview;
+                            wrapper.style.display = "block";
+                        } else {
+                            wrapper.style.display = "none";
+                        }
+                    })
+                    storeTask(recentTasksContainer, {"prompt": `Write a(n) ${typeElement.value} about ${topicElement.value}`, "completion": destination.textContent, "sources": sources});
                 } else {
-                    this.removeEventListener("message", receive);
-                    //reset feedback bar
-                    document.querySelector(".feedback-bar").style.display = "flex";
-                    document.querySelector(".feedback-text").style.display = "none";
-                    //update user words
-                    var words = destination.textContent.split(" ").length;
-                    document.querySelector("[customID='task-word-count']").innerHTML = `Word count: ${words}`;
-                    updateUserWords(userWordCount+words);
-                    //store task
-                    var recentTasksContainer = document.querySelector("#recent-tasks");
-                    storeTask(recentTasksContainer, {"prompt": `Write a(n) ${typeElement.value} about ${topicElement.value}`, "completion": destination.textContent, "sources": source_data});
-                    var taskLength = recentTasksContainer.querySelectorAll(".module").length;
-                    if(taskLength-1>5){
-                        recentTasksContainer.querySelectorAll(".module")[taskLength-1].remove();
-                    } 
+                    storeTask(recentTasksContainer, {"prompt": `Write a(n) ${typeElement.value} about ${topicElement.value}`, "completion": destination.textContent, "sources": []});
                 }
+                var taskLength = recentTasksContainer.querySelectorAll(".module").length;
+                if(taskLength-1>5){
+                    recentTasksContainer.querySelectorAll(".module")[taskLength-1].remove();
+                } 
             }
         });
         socket.addEventListener("close", function handle_close() {
@@ -1058,45 +1060,45 @@ function submitQuestion(socket) {
         waiting(destination);
         isWaiting = true;
         socket.addEventListener("message", function receive(event) {
-            var source_data = [];
             if (isWaiting) {
                 destination.textContent = "";
                 clearInterval(waitingInterval);
                 isWaiting = false;
-            }
-            let response = JSON.parse(event.data);
-            //handle sources
-            if (response.hasOwnProperty('sources')) {
-                sourcesContainer.style.display = "flex"
-                sourcesContainer.querySelectorAll(".source-wrapper").forEach((wrapper, index) => {
-                    if(index<response.sources.length){
-                        source_data = response.sources[index];
-                        wrapper.querySelector(".link").innerHTML = source_data.display;
-                        wrapper.querySelector(".source-link").href = source_data.url;
-                        wrapper.querySelector(".source-link").target = "_blank";
-                        wrapper.querySelector(".sources-text.title").innerHTML = source_data.title;
-                        wrapper.querySelector(".sources-text").innerHTML = source_data.preview;
-                        wrapper.style.display = "block";
-                    } else {
-                        wrapper.style.display = "none";
-                    }
-                })
             } else {
+                let response = JSON.parse(event.data);
                 let data = response.message;
                 if (data!=="[END MESSAGE]") {
                     destination.textContent += data;
                 } else {
                     this.removeEventListener("message", receive);
-                    //reset feedback bar
-                    document.querySelector(".feedback-bar").style.display = "flex";
-                    document.querySelector(".feedback-text").style.display = "none";
                     //update user words
                     var words = destination.textContent.split(" ").length;
                     document.querySelector("[customID='question-word-count']").innerHTML = `Word count: ${words}`;
                     updateUserWords(userWordCount+words);
                     //store task
                     var recentQuestionContainer = document.querySelector("#recent-questions");
-                    storeTask(recentQuestionContainer, {"prompt": questionElement.value, "completion": destination.textContent, "sources": source_data});
+                    if (response.hasOwnProperty('sources')) {
+                        //handle sources
+                        const sources = response.sources;
+                        sourcesContainer.style.display = "flex";
+                        sourcesContainer.querySelectorAll(".source-wrapper").forEach((wrapper, index) => {
+                            if (index<response.sources.length) {
+                                let source_data = response.sources[index];
+                                wrapper.querySelector(".link").innerHTML = source_data.display;
+                                wrapper.querySelector(".source-link").href = source_data.url;
+                                wrapper.querySelector(".source-link").target = "_blank";
+                                wrapper.querySelector(".sources-text.title").innerHTML = source_data.title;
+                                wrapper.querySelector(".sources-text").innerHTML = source_data.preview;
+                                wrapper.style.display = "block";
+                            } else {
+                                wrapper.style.display = "none";
+                            }
+                        })
+                        storeTask(recentQuestionContainer, {"prompt": questionElement.value, "completion": destination.textContent, "sources": sources});
+                    } else {
+                        storeTask(recentQuestionContainer, {"prompt": questionElement.value, "completion": destination.textContent, "sources": []});
+                    }
+
                     var taskLength = recentQuestionContainer.querySelectorAll(".module").length;
                     if(taskLength-1>5){
                         recentQuestionContainer.querySelectorAll(".module")[taskLength-1].remove();
@@ -1172,6 +1174,7 @@ setInterval(() => {
 }, 60000)
 
 const WEB_SERVER_BASE_URL = "https://virtuallyme2-0.onrender.com"
-const WEB_SOCKET_URL = "wss://virtuallyme2-0.onrender.com/ws"
+//const WEB_SOCKET_URL = "wss://virtuallyme2-0.onrender.com/ws"
+const WEB_SOCKET_URL = "ws://127.0.0.1:8000/ws"
 let isWaiting = false;
 

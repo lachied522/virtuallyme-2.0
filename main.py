@@ -2,6 +2,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from websockets.exceptions import ConnectionClosedError
 from pydantic import BaseModel
 
 import asyncio
@@ -20,12 +21,12 @@ from datetime import datetime
 import json
 import math
 
-##openai api key
+#openai api key
 ##OPENAI_API_KEY = "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"
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 openai.api_key = OPENAI_API_KEY 
 
-##google api key
+#google api key
 ##GOOGLE_API_KEY = "AIzaSyCm-gGY014pfYImeiLMqCYuNGQ1nf8g2eg"
 ##GOOGLE_CSE_ID = "d7251a9905c2540fa"
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
@@ -145,8 +146,8 @@ def get_logit_bias(texts):
     
     for key, value in tokens_dict.items():
         bias = 3*math.log(1+value)/math.log(1+n_tokens)
-        #max bias is 10
-        tokens_dict[key] = min(bias, 9)
+        #max bias is 5
+        tokens_dict[key] = min(bias, 5)
 
 
     sorted_tokens = sorted(tokens_dict.items(), key=lambda x: x[1], reverse=True)
@@ -367,7 +368,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     messages.append({"role": "user", "content": f"Using a high degree of variation in your structure, syntax, and semantics, write a {category} about {topic}. {additional}"})
                     logit_bias = {}
             
-                max_tokens, temperature, presence_penalty = 1000, 1.2, 0.3
+                max_tokens, temperature, presence_penalty = 1000, 1.1, 0.3
                 prompt = f"Write a(n) {category} about {topic}." 
                 sources = search_result["sources"]
 
@@ -406,7 +407,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     messages.append({"role": "user", "content": f"Answer the following question using a high degree of variation in your structure, syntax, and semantics.\nQuestion: {question}"})
                     logit_bias = {}
             
-                max_tokens, temperature, presence_penalty = 1000, 1.2, 0.3
+                max_tokens, temperature, presence_penalty = 1000, 1.1, 0.3
                 prompt = f"{question}?" 
                 sources = search_result["sources"]
 
@@ -431,7 +432,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     messages.append({"role": "user", "content": f"Rewrite the following text using a high degree of variation in your structure, syntax, and semantics. {additional} Text: {text}"})
                     logit_bias = {}
             
-                max_tokens, temperature, presence_penalty = 1000, 1.2, 0
+                max_tokens, temperature, presence_penalty = 1000, 1.1, 0
                 #define prompt to be stored in DB
                 prompt = f"Rewrite the following: {text[:120]}"
                 sources = []
@@ -463,23 +464,30 @@ async def websocket_endpoint(websocket: WebSocket):
                 logit_bias=logit_bias,
                 stream=True
             )
-            #send source data back as json
-            if len(sources) > 0:
-                await websocket.send_json({"sources": sources})
-            #store messages to add to DB
+
+            
             message_list = []
             for chunk in response:
                 delta = chunk['choices'][0]['delta']
                 message = str(delta.get('content', ''))
                 await websocket.send_json({"message": message})
-                message_list.append(message)
-            await websocket.send_json({"message": "[END MESSAGE]"})
+                message_list.append(message) #store messages to add to DB
+
+            if len(sources) > 0:
+                #send source data back as json
+                await websocket.send_json({"message": "[END MESSAGE]", "sources": sources})
+            else:
+                await websocket.send_json({"message": "[END MESSAGE]"})
+    
             #store task in DB
             completion = ''.join(message_list)
             await store_task(user, data["category"], prompt, completion, sources, job)
-    except WebSocketDisconnect:
+    except WebSocketDisconnect as e:
+        print(f"WebSocket connection closed with code {e.code}")
         pass
-    except ValueError as e:
+    except ConnectionClosedError as e:
+        print(f"Connection closed with error: {e}")
+    except Exception as e:
         print(e)
-        websocket.close(reason=e)
+        await websocket.close(reason=e)
         pass
