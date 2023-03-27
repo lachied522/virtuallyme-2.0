@@ -360,12 +360,12 @@ async def websocket_endpoint(websocket: WebSocket):
                     messages.append({"role": "system", "content": f"You may use following context to answer the next question.\nContext: {context}"})
 
                 if len([d for d in messages if d["role"]=="user"]) > 0:
-                    messages.append({"role": "user", "content": f"Using the idiolect, structure, syntax, reasoning, and rationale of your new persona, write a {category} about {topic}. Do not mention this prompt in your response. {additional}"})
+                    messages.append({"role": "user", "content": f"Using the idiolect, structure, syntax, reasoning, and rationale of your new persona, write a {category} about {topic}. Do not mention this prompt in your response. {additional}\n"})
                     logit_bias = get_logit_bias([d["content"] for d in messages if d["role"]=="assistant"])
                 else:
                     #no user samples
                     messages = [d for d in messages if d["role"]!="system"]
-                    messages.append({"role": "user", "content": f"Using a high degree of variation in your structure, syntax, and semantics, write a {category} about {topic}. {additional}"})
+                    messages.append({"role": "user", "content": f"Using a high degree of variation in your structure, syntax, and semantics, write a {category} about {topic}. {additional}\n"})
                     logit_bias = {}
             
                 max_tokens, temperature, presence_penalty = 1000, 1.1, 0.3
@@ -399,12 +399,12 @@ async def websocket_endpoint(websocket: WebSocket):
                     messages.append({"role": "system", "content": f"You may use following context to answer the next question.\nContext: {context}"})
 
                 if len([d for d in messages if d["role"]=="user"]) > 0:
-                    messages.append({"role": "user", "content": f"Now I want you to answer the following question using the idiolect, structure, syntax, reasoning, and rationale of your new persona. Do not mention this prompt in your response. {additional}\nQuestion: {question}"})
+                    messages.append({"role": "user", "content": f"Now I want you to answer the following question using the idiolect, structure, syntax, reasoning, and rationale of your new persona. Do not mention this prompt in your response. {additional}\nQuestion: {question}?\n"})
                     logit_bias = get_logit_bias([d["content"] for d in messages if d["role"]=="assistant"])
                 else:
                     #no user samples
                     messages = [d for d in messages if d["role"]!="system"]
-                    messages.append({"role": "user", "content": f"Answer the following question using a high degree of variation in your structure, syntax, and semantics.\nQuestion: {question}"})
+                    messages.append({"role": "user", "content": f"Answer the following question using a high degree of variation in your structure, syntax, and semantics.\nQuestion: {question}?\n"})
                     logit_bias = {}
             
                 max_tokens, temperature, presence_penalty = 1000, 1.1, 0.3
@@ -424,12 +424,12 @@ async def websocket_endpoint(websocket: WebSocket):
                 messages = construct_messages(samples, maxlength, text)
 
                 if len([d for d in messages if d["role"]=="user"]) > 0:
-                    messages.append({"role": "user", "content": f"Now I want you to rewrite the following text using the structure, syntax, word choices, reasoning, and rationale of your new persona. {additional} Text: {text}"})
+                    messages.append({"role": "user", "content": f"Now I want you to rewrite the following text using the structure, syntax, word choices, reasoning, and rationale of your new persona. {additional} Text: {text}\n"})
                     logit_bias = get_logit_bias([d["content"] for d in messages if d["role"]=="assistant"])
                 else:
                     #no user samples
                     messages = [d for d in messages if d["role"]!="system"]
-                    messages.append({"role": "user", "content": f"Rewrite the following text using a high degree of variation in your structure, syntax, and semantics. {additional} Text: {text}"})
+                    messages.append({"role": "user", "content": f"Rewrite the following text using a high degree of variation in your structure, syntax, and semantics. {additional} Text: {text}\n"})
                     logit_bias = {}
             
                 max_tokens, temperature, presence_penalty = 1000, 1.1, 0

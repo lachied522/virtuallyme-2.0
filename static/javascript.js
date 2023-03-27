@@ -123,27 +123,50 @@ function removeFeedbackAnimation(feedbackBar){
     feedbackBar.querySelector(".feedback-button.negative").style.display = "flex";
 }
 
-function showBanner(banner) {
+function showAlertBanner(msg) {
+    let banner = document.querySelector(".banner-wrapper.alert");
+    banner.querySelector(".text-300").innerHTML = msg;
+
     banner.style.display = "block";
 
-    banner.querySelector("alert-banner-padding").animate([
+    banner.querySelector(".alert-banner-padding").animate([
         { opacity: '0' },
         { opacity: '1' }
     ], {
         duration: 300,
-        easing: 'ease'
+        easing: 'ease',
+        fill: 'forwards'
     })
 
     banner.animate([
-        { height: '0', opacity: '0' },
-        { height: 'auto', opacity: '1' }
+        { maxHeight: '0', opacity: '0' },
+        { maxHeight: '100px', opacity: '1' }
     ], {
-        duration: 300,
-        easing: 'ease'
+        duration: 400,
+        easing: 'ease',
+        fill: 'forwards'
     })
 
     setTimeout(() => {
-        banner.querySelector(".alert-banner-close-icon").click();
+        //show banner for five seconds
+        //banner.querySelector(".alert-banner-close-icon").click();
+        banner.animate([
+            { maxHeight: '100px', opacity: '1' },
+            { maxHeight: '0', opacity: '0' }
+        ], {
+            duration: 400,
+            easing: 'ease',
+            fill: 'forwards'
+        })
+
+        banner.querySelector(".alert-banner-padding").animate([
+            { opacity: '1' },
+            { opacity: '0' }
+        ], {
+            duration: 300,
+            easing: 'ease',
+            fill: 'forwards'
+        })
     }, 5000);
 }
 
@@ -504,14 +527,25 @@ function addSample(jobElement) {
 
 function uploadFiles(jobElement, files) {
     const url = "https://virtuallyme.onrender.com/read_files";
+    const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB in bytes
     const accept = ["pdf", "docx"];
     const formData = new FormData();
-    for(let i = 0; i < files.length; i++){
+    var fileSize = 0;
+    for (let i = 0; i < files.length; i++) {
         let array = files[i].name.split(".");
-        if(accept.includes(array[array.length-1])){
-            formData.append('file', files[i], files[i].name);
+        let size = files[i].size;
+        if (accept.includes(array[array.length-1])) {
+            if (size + fileSize < MAX_FILE_SIZE) {
+                formData.append('file', files[i], files[i].name);
+                fileSize += size;
+            } else {
+                showAlertBanner(`Please upload ${MAX_FILE_SIZE}MB maximum at a time`);
+            }
+        } else {
+            showAlertBanner('Please upload .docx or .pdf');
         }
     }
+    //show loading element
     jobElement.querySelector(".loading-container").style.display = "flex";
     fetch(url, {
         method: 'POST',
@@ -525,10 +559,10 @@ function uploadFiles(jobElement, files) {
         var currentWords = parseInt(wordCountElement.innerHTML.split("/")[0]);
         var newWords = 0;
         for(let i=0; i<data.texts.length; i++){
-            if (data.texts[i]==="Unsupported filetype") {
-                showBanner(document.querySelector(".banner-wrapper.unsupported-filetype"));
+            if (data.texts[i].includes("Unsupported filetype")) {
+                showAlertBanner(data.texts[i]);
             } else if (data.texts[i].includes("Could not read file ")) {
-                showBanner(document.querySelector(".banner-wrapper.error-reading-file"));
+                showAlertBanner(data.texts[i]);
             } else {
                 samplesGrid.appendChild(newSample(jobElement, sampleWrapper, data.texts[i]));
                 newWords += data.texts[i].length;
@@ -700,7 +734,7 @@ function generateIdeas(socket) {
                 updateUserWords(userWordCount+words);
                 //store task
                 var recentIdeasContainer = document.querySelector("#recent-ideas");
-                storeTask(recentIdeasContainer, {"prompt": `Generate content ideas for my ${typeElement.value}`, "completion": destination.textContent.split()}); 
+                storeTask(recentIdeasContainer, {"prompt": `Generate content ideas for my ${typeElement.value} about ${topicElement.value}`, "completion": destination.textContent.split()}); 
                 var taskLength = recentIdeasContainer.querySelectorAll(".module").length;
                 if(taskLength-1>5){
                     recentIdeasContainer.querySelectorAll(".module")[taskLength-1].remove();
