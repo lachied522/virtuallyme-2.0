@@ -177,6 +177,22 @@ function updateUserWords(value){
     })
 }
 
+function detectGPT(container, score){
+    if (score<0) {
+        container.querySelector(".text-200.detection-text").innerHTML = `NA`;
+    } else {
+        container.querySelector(".text-200.detection-text").innerHTML = `${score}%`
+        if (score<=33) {
+            container.querySelector(".text-200.detection-text").style.color = "#05c168"; //green
+        } else if (score<=67) {
+            container.querySelector(".text-200.detection-text").style.color = "#ffb016"; //yellow
+        } else {
+            container.querySelector(".text-200.detection-text").style.color = "#ff5a65"; //red
+        }
+        container.style.display = "flex"; //display the container
+    }
+}
+
 function newJob(jobName){
     let index = userJobs.length;
     let jobElement = document.querySelectorAll("[customID='job-container']")[index];
@@ -200,17 +216,40 @@ function newJob(jobName){
 
 function updateJobWords(jobElement, value){
     let wordCountElement = jobElement.querySelector("[customID='job-word-count']");
+
+    wordCountElement.innerHTML = Math.max(value, 0);
+    jobElement.querySelector("[customID='samples-empty-text']").style.display = "none";
     
-    if(value<=0){
-        wordCountElement.innerHTML = "0/"+jobMaxWords.toLocaleString();
-        jobElement.querySelector("[customID='samples-empty-text']").style.display = "block";
+    //progress bar logic
+    let progressBar = jobElement.querySelector(".progress-bar-inner");
+    let progressText = jobElement.querySelector(".text-300.progress-text");
+    if (progressBar.classList.length>1) {
+        progressBar.classList.remove(progressBar.classList[progressBar.classList.length-1]);
+    }
+    
+    if (value<=1000) {
+        progressBar.classList.add("stage-0");
+        progressText.innerHTML = "";
+
+    } else if (value<=3000) {
+        progressBar.classList.add("stage-1");
+        progressText.innerHTML = "Not bad";
+
+    } else if (value<=6500) {
+        progressBar.classList.add("stage-2");
+        progressText.innerHTML = "Good";
+
+    } else if (value<=1000) {
+        progressBar.classList.add("stage-3");
+        progressText.innerHTML = "Great!";
+
     } else {
-        wordCountElement.innerHTML = value+"/"+jobMaxWords.toLocaleString();
-        jobElement.querySelector("[customID='samples-empty-text']").style.display = "none";
+        progressBar.classList.add("stage-4");
+        progressText.innerHTML = "Excellent!";
     }
 }
 
-function newSample(jobElement, sampleWrapper, completion){
+function newSample(jobElement, sampleWrapper, completion) {
     let sampleClone = sampleWrapper.parentElement.cloneNode(true);
     sampleClone.querySelector("[customID='sample-prompt-display']").innerHTML = completion.slice(0, 120);
     sampleClone.querySelector("[customID='sample-text']").innerHTML = completion;
@@ -245,9 +284,9 @@ function storeTask(tasksContainer, data){
 
     taskClone.querySelector("[customID='tasks-header']").innerHTML = data.prompt;
     taskClone.querySelector("[customID='tasks-body']").innerHTML = data.completion;
-    let sourceContainer = taskClone.querySelector(".task-source-container");
-    if(sourceContainer){
-        sourceContainer.querySelectorAll(".link").forEach((link, index) => {
+    
+    if (data.hasOwnProperty('sources')) {
+        taskClone.querySelectorAll(".link").forEach((link, index) => {
             if(index<data.sources.length){
                 link.parentElement.href = data.sources[index].url;
                 link.parentElement.target = "_blank";
@@ -260,7 +299,21 @@ function storeTask(tasksContainer, data){
             }
         })
     }
-    if(data.feedback){
+    if (data.hasOwnProperty('score')) {
+        if (data.score!==null && data.score>-1) {
+            let detectionContainer = taskClone.querySelector(".detector-container");
+            detectionContainer.querySelector(".text-200.detection-text").innerHTML = `${data.score}%`
+            if (data.score<=33) {
+                detectionContainer.querySelector(".text-200.detection-text").style.color = "#05c168"; //green
+            } else if (data.score<=67) {
+                detectionContainer.querySelector(".text-200.detection-text").style.color = "#ffb016"; //yellow
+            } else {
+                detectionContainer.querySelector(".text-200.detection-text").style.color = "#ff5a65"; //red
+            }
+            detectionContainer.style.display = "flex"; //display the container
+        }
+    }
+    if (data.hasOwnProperty('feedback')) {
         if(data.feedback==="positive"){
             feedbackAnimation(taskClone.querySelector(".feedback-bar"), "positive");
         } else if(data.feedback==="negative") {
@@ -494,7 +547,7 @@ function addSample(jobElement) {
         var textElement = form.querySelector("[customInput='text']");
 
         var wordCountElement = jobElement.querySelector("[customID='job-word-count']");
-        var currentWords = parseInt(wordCountElement.innerHTML.split("/")[0]);
+        var currentWords = parseInt(wordCountElement.innerHTML);
         var newWords = textElement.value.split(" ").length;
 
         if(currentWords+newWords>=jobMaxWords){
@@ -556,7 +609,7 @@ function uploadFiles(jobElement, files) {
         let samplesGrid = jobElement.querySelector(".samples-grid");
         let sampleWrapper = samplesGrid.querySelectorAll(".sample-wrapper")[0];
         var wordCountElement = jobElement.querySelector("[customID='job-word-count']");
-        var currentWords = parseInt(wordCountElement.innerHTML.split("/")[0]);
+        var currentWords = parseInt(wordCountElement.innerHTML);
         var newWords = 0;
         for(let i=0; i<data.texts.length; i++){
             if (data.texts[i].includes("Unsupported filetype")) {
@@ -585,7 +638,7 @@ function removeSample(jobElement, sampleWrapper){
     sampleWrapper.remove();
     //adjust word count
     let wordCountElement = jobElement.querySelector("[customID='job-word-count']");
-    let currentWords = parseInt(wordCountElement.innerHTML.split("/")[0]);
+    let currentWords = parseInt(wordCountElement.innerHTML);
     updateJobWords(jobElement, currentWords-sampleWords);
     //show save button
     jobElement.querySelector("[customID='save-button']").style.display = "flex";
@@ -711,7 +764,7 @@ function generateIdeas(socket) {
         "topic": topicElement.value
     };
     if(empty.length==0){
-        document.querySelector("[customID='idea-word-count']").innerHTML = `Word count __`;
+        document.querySelector("[customID='idea-word-count']").innerHTML = `__`;
         var destination = document.querySelector("[customID='ideas-output']");
         waiting(destination);
         isWaiting = true;
@@ -725,12 +778,13 @@ function generateIdeas(socket) {
             let data = response.message;
             if (data!=="[END MESSAGE]") {
                 destination.textContent += data;
+                destination.scrollTop = destination.scrollHeight;
             } else {
                 this.removeEventListener("message", receive);
                 isWaiting = false;
                 //update user words
                 var words = destination.textContent.split(" ").length;
-                document.querySelector("[customID='idea-word-count']").innerHTML = `Word count: ${words}`;
+                document.querySelector("[customID='idea-word-count']").innerHTML = `${words}`;
                 updateUserWords(userWordCount+words);
                 //store task
                 var recentIdeasContainer = document.querySelector("#recent-ideas");
@@ -786,7 +840,8 @@ function submitRewrite(socket) {
     };
     //check text element is not empty
     if(textElement.value !== ""){
-        document.querySelector("[customID='rewrite-word-count']").innerHTML = "Word count __";
+        document.querySelector("[customID='rewrite-word-count']").innerHTML = "__";
+        document.querySelector("[customID='rewrite-score']").innerHTML = "";
         var destination = document.querySelector("[customID='rewrite-output']");
         waiting(destination);
         isWaiting = true;
@@ -800,15 +855,19 @@ function submitRewrite(socket) {
             let data = response.message;
             if (data!=="[END MESSAGE]") {
                 destination.textContent += data;
+                destination.scrollTop = destination.scrollHeight;
             } else {
                 this.removeEventListener("message", receive);
                 //update user words
                 var words = destination.textContent.split(" ").length;
-                document.querySelector("[customID='rewrite-word-count']").innerHTML = `Word count: ${words}`;
+                document.querySelector("[customID='rewrite-word-count']").innerHTML = `${words}`;
+                //update detection score
+                detectGPT(document.querySelector("[customID='rewrite-score']").parentElement, response.score);
+                //update user words
                 updateUserWords(userWordCount+words);
                 //store task
                 var rewritesContainer = document.querySelector("#recent-rewrites");
-                storeTask(rewritesContainer, {"prompt": `Rewrite the following: ${textElement.value.slice(0, 120)}`, "completion": destination.textContent});
+                storeTask(rewritesContainer, {"prompt": `Rewrite the following: ${textElement.value.slice(0, 120)}`, "completion": destination.textContent, "score": response.score});
                 var taskLength = rewritesContainer.querySelectorAll(".module").length;
                 if(taskLength-1>5){
                     rewritesContainer.querySelectorAll(".module")[taskLength-1].remove();
@@ -1003,13 +1062,13 @@ function submitTask(socket) {
     };
     //if neither type or topic element is missing
     if(empty.length==0){
-        document.querySelector("[customID='task-word-count']").innerHTML = `Word count __`;
+        document.querySelector("[customID='task-word-count']").innerHTML = "__";
 
         var sourcesContainer = document.querySelector("[customID='task-sources-container']");
         if(searchElement.getAttribute("on")==="false"){
             sourcesContainer.style.display = "none";
         }
-
+        document.querySelector("[customID='task-score']").innerHTML = "";
         var destination = document.querySelector("[customID='task-output']");
         waiting(destination);
         isWaiting = true;
@@ -1024,19 +1083,22 @@ function submitTask(socket) {
             let data = response.message;
             if (data!=="[END MESSAGE]") {
                 destination.textContent += data;
+                destination.scrollTop = destination.scrollHeight;
             } else {
                 this.removeEventListener("message", receive);
                 //reset feedback bar
                 document.querySelector(".feedback-bar").style.display = "flex";
                 document.querySelector(".feedback-text").style.display = "none";
                 //update user words
-                var words = destination.textContent.split(" ").length;
-                document.querySelector("[customID='task-word-count']").innerHTML = `Word count: ${words}`;
+                const words = destination.textContent.split(" ").length;
+                document.querySelector("[customID='task-word-count']").innerHTML = `${words}`;
+                //update detection score
+                detectGPT(document.querySelector("[customID='task-score']").parentElement, response.score);
+                //update user words
                 updateUserWords(userWordCount+words);
-                //store task
-                var recentTasksContainer = document.querySelector("#recent-tasks");
+                //handle sources
+                const recentTasksContainer = document.querySelector("#recent-tasks");
                 if (response.hasOwnProperty('sources')) {
-                    //handle sources
                     const sources = response.sources;
                     sourcesContainer.style.display = "flex"
                     sourcesContainer.querySelectorAll(".source-wrapper").forEach((wrapper, index) => {
@@ -1052,9 +1114,9 @@ function submitTask(socket) {
                             wrapper.style.display = "none";
                         }
                     })
-                    storeTask(recentTasksContainer, {"prompt": `Write a(n) ${typeElement.value} about ${topicElement.value}`, "completion": destination.textContent, "sources": sources});
+                    storeTask(recentTasksContainer, {"prompt": `Write a(n) ${typeElement.value} about ${topicElement.value}`, "completion": destination.textContent, "score": response.score, "sources": sources});
                 } else {
-                    storeTask(recentTasksContainer, {"prompt": `Write a(n) ${typeElement.value} about ${topicElement.value}`, "completion": destination.textContent, "sources": []});
+                    storeTask(recentTasksContainer, {"prompt": `Write a(n) ${typeElement.value} about ${topicElement.value}`, "completion": destination.textContent, "score": response.score, "sources": []});
                 }
                 var taskLength = recentTasksContainer.querySelectorAll(".module").length;
                 if(taskLength-1>5){
@@ -1112,9 +1174,10 @@ function submitQuestion(socket) {
         "search": searchElement.getAttribute("on")
     };
     //if neither type or topic element is missing
-    if(empty.length==0){
-        document.querySelector("[customID='question-word-count']").innerHTML = `Word count __`;
-
+    if (empty.length==0) {
+        document.querySelector("[customID='question-word-count']").innerHTML = "__";
+        document.querySelector("[customID='question-score']").innerHTML = "";
+        
         var sourcesContainer = document.querySelector("[customID='question-sources-container']");
         if(searchElement.getAttribute("on")==="false"){
             sourcesContainer.style.display = "none";
@@ -1133,11 +1196,15 @@ function submitQuestion(socket) {
                 let data = response.message;
                 if (data!=="[END MESSAGE]") {
                     destination.textContent += data;
+                    destination.scrollTop = destination.scrollHeight;
                 } else {
                     this.removeEventListener("message", receive);
                     //update user words
                     var words = destination.textContent.split(" ").length;
-                    document.querySelector("[customID='question-word-count']").innerHTML = `Word count: ${words}`;
+                    document.querySelector("[customID='question-word-count']").innerHTML = `${words}`;
+                    //update detection score
+                    detectGPT(document.querySelector("[customID='question-score']").parentElement, response.score);
+                    //update user words
                     updateUserWords(userWordCount+words);
                     //store task
                     var recentQuestionContainer = document.querySelector("#recent-questions");
@@ -1158,9 +1225,9 @@ function submitQuestion(socket) {
                                 wrapper.style.display = "none";
                             }
                         })
-                        storeTask(recentQuestionContainer, {"prompt": questionElement.value, "completion": destination.textContent, "sources": sources});
+                        storeTask(recentQuestionContainer, {"prompt": questionElement.value, "completion": destination.textContent, "score": response.score, "sources": sources});
                     } else {
-                        storeTask(recentQuestionContainer, {"prompt": questionElement.value, "completion": destination.textContent, "sources": []});
+                        storeTask(recentQuestionContainer, {"prompt": questionElement.value, "completion": destination.textContent, "score": response.score, "sources": []});
                     }
 
                     var taskLength = recentQuestionContainer.querySelectorAll(".module").length;
@@ -1240,4 +1307,3 @@ setInterval(() => {
 const WEB_SERVER_BASE_URL = "https://virtuallyme2-0.onrender.com"
 const WEB_SOCKET_URL = "wss://virtuallyme2-0.onrender.com/ws"
 let isWaiting = false;
-

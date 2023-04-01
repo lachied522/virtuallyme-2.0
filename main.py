@@ -32,6 +32,8 @@ openai.api_key = OPENAI_API_KEY
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 GOOGLE_CSE_ID = os.getenv("GOOGLE_CSE_ID")
 
+GPTZERO_API_KEY = os.getenv("GPTZERO_API_KEY")
+
 DB_BASE_URL = os.getenv("DB_BASE_URL")
 
 #tiktoken encoding
@@ -146,13 +148,32 @@ def get_logit_bias(texts):
     
     for key, value in tokens_dict.items():
         bias = 3*math.log(1+value)/math.log(1+n_tokens)
-        #max bias is 5
-        tokens_dict[key] = min(bias, 5)
+        #max bias is 7
+        tokens_dict[key] = min(bias, 7)
 
 
     sorted_tokens = sorted(tokens_dict.items(), key=lambda x: x[1], reverse=True)
     #return 300 tokens with the highest bias
     return dict(sorted_tokens[:300])
+
+async def predict_text(document):
+    try:
+        url = 'https://api.gptzero.me/v2/predict/text'
+        headers = {
+            'accept': 'application/json',
+            'X-Api-Key': GPTZERO_API_KEY,
+            'Content-Type': 'application/json'
+        }
+        data = {
+            'document': document
+        }
+        async with aiohttp.ClientSession(headers=headers) as session:
+            async with session.post(url, json=data) as response:
+                result = await response.json()
+                return round(result['documents'][0]['average_generated_prob']*100)
+    except Exception as e:
+        print(e)
+        return -1
 
 async def fetch_page(url, session):
     try:
@@ -271,7 +292,7 @@ async def get_data(member_id, job_id=-1):
 
     return json.loads(data)["samples"]
 
-async def store_task(member_id, category, prompt, completion, sources=[], job_id=None):
+async def store_task(member_id, category, prompt, completion, score=None, sources=[], job_id=None):
     """
     :param job_id: job for which task was created
     """
@@ -283,6 +304,7 @@ async def store_task(member_id, category, prompt, completion, sources=[], job_id
             "category": category,
             "prompt": prompt,
             "completion": completion,
+            "score": score,
             "sources": sources,
             "job_id": job_id
         }
@@ -368,7 +390,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     messages.append({"role": "user", "content": f"Using a high degree of variation in your structure, syntax, and semantics, write a {category} about {topic}. {additional}\n"})
                     logit_bias = {}
             
-                max_tokens, temperature, presence_penalty = 1000, 1.1, 0.3
+                max_tokens, temperature, presence_penalty = 1000, 1.2, 0.3
                 prompt = f"Write a(n) {category} about {topic}." 
                 sources = search_result["sources"]
 
@@ -407,7 +429,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     messages.append({"role": "user", "content": f"Answer the following question using a high degree of variation in your structure, syntax, and semantics.\nQuestion: {question}?\n"})
                     logit_bias = {}
             
-                max_tokens, temperature, presence_penalty = 1000, 1.1, 0.3
+                max_tokens, temperature, presence_penalty = 1000, 1.2, 0
                 prompt = f"{question}?" 
                 sources = search_result["sources"]
 
@@ -420,7 +442,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 samples = await get_data(user, job)
 
-                maxlength = 2000-len(additional.split()) #prompt limit 3097 tokens (4097-1000 for completion)
+                maxlength = 2000-len(text.split())-len(additional.split()) #prompt limit 3097 tokens (4097-1000 for completion)
                 messages = construct_messages(samples, maxlength, text)
 
                 if len([d for d in messages if d["role"]=="user"]) > 0:
@@ -432,7 +454,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     messages.append({"role": "user", "content": f"Rewrite the following text using a high degree of variation in your structure, syntax, and semantics. {additional} Text: {text}\n"})
                     logit_bias = {}
             
-                max_tokens, temperature, presence_penalty = 1000, 1.1, 0
+                max_tokens, temperature, presence_penalty = 1000, 1.2, 0
                 #define prompt to be stored in DB
                 prompt = f"Rewrite the following: {text[:120]}"
                 sources = []
@@ -445,13 +467,13 @@ async def websocket_endpoint(websocket: WebSocket):
             
                 messages = [{
                     "role": "user", 
-                    "content": f"Generate ideas for my {category} about {topic}. Elaborate on each idea by providing specific examples of what content to include."
+                    "content": f"Generate ideas for {category} about {topic}. Elaborate on each idea by providing specific examples of what content to include."
                 }]
 
                 logit_bias = {}
                 max_tokens, temperature, presence_penalty = 600, 0.3, 0.2
                 #define prompt to be stored in DB
-                prompt = f"Generate content ideas for my {category} about {topic}"
+                prompt = f"Generate content ideas for {category} about {topic}"
                 sources = []
                 job = None
             
@@ -465,7 +487,6 @@ async def websocket_endpoint(websocket: WebSocket):
                 stream=True
             )
 
-            
             message_list = []
             for chunk in response:
                 delta = chunk['choices'][0]['delta']
@@ -473,15 +494,21 @@ async def websocket_endpoint(websocket: WebSocket):
                 await websocket.send_json({"message": message})
                 message_list.append(message) #store messages to add to DB
 
+            completion = ''.join(message_list)
+            if data["category"]!="idea":
+                #do not score ideas
+                score = await predict_text(completion)
+            else:
+                score = None
+
             if len(sources) > 0:
                 #send source data back as json
-                await websocket.send_json({"message": "[END MESSAGE]", "sources": sources})
+                await websocket.send_json({"message": "[END MESSAGE]", "score": score, "sources": sources})
             else:
-                await websocket.send_json({"message": "[END MESSAGE]"})
+                await websocket.send_json({"message": "[END MESSAGE]", "score": score})
     
             #store task in DB
-            completion = ''.join(message_list)
-            await store_task(user, data["category"], prompt, completion, sources, job)
+            await store_task(user, data["category"], prompt, completion, score, sources, job)
     except WebSocketDisconnect as e:
         print(f"WebSocket connection closed with code {e.code}")
         pass
@@ -489,5 +516,5 @@ async def websocket_endpoint(websocket: WebSocket):
         print(f"Connection closed with error: {e}")
     except Exception as e:
         print(e)
-        await websocket.close(reason=e)
+        await websocket.close()
         pass
