@@ -50,6 +50,22 @@ function waiting(element) {
     }, 400);
 }
 
+function detectGPT(container, score){
+    if (score<0) {
+        container.querySelector(".text-200.detection-text").innerHTML = `NA`;
+    } else {
+        container.querySelector(".text-200.detection-text").innerHTML = `${score}%`
+        if (score<=33) {
+            container.querySelector(".text-200.detection-text").style.color = "#05c168"; //green
+        } else if (score<=67) {
+            container.querySelector(".text-200.detection-text").style.color = "#ffb016"; //yellow
+        } else {
+            container.querySelector(".text-200.detection-text").style.color = "#ff5a65"; //red
+        }
+        container.style.display = "flex"; //display the container
+    }
+}
+
 function submitTask(socket) {
   if(isWaiting){
       //if still waiting, do nothing
@@ -93,11 +109,13 @@ function submitTask(socket) {
             let data = response.message;
             if (data!=="[END MESSAGE]") {
                 destination.textContent += data;
+                destination.scrollTop = destination.scrollHeight;
             } else {
                 this.removeEventListener("message", receive);
                 //reset feedback bar
                 var words = destination.textContent.split(" ").length;
-                document.querySelector("[customID='task-word-count']").innerHTML = `Word count: ${words}`;
+                document.querySelector("[customID='task-word-count']").innerHTML = `${words}`;
+                detectGPT(document.querySelector("[customID='task-score']").parentElement, response.score);
                 if(uses > -1){
                     uses++;
                     useCountElement.innerHTML = "Monthly uses " + String(uses) + "/5"

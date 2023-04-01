@@ -193,27 +193,6 @@ function detectGPT(container, score){
     }
 }
 
-function newJob(jobName){
-    let index = userJobs.length;
-    let jobElement = document.querySelectorAll("[customID='job-container']")[index];
-    //add job name to job Element
-    jobElement.setAttribute("jobID", -1);
-    jobElement.querySelector("[customID='job-name']").value = jobName;
-    userJobs.push(jobName);
-    //increase job count
-    document.querySelector("[customID='job-count']").innerHTML = String(userJobs.length)+"/"+String(maxJobs);
-    document.querySelectorAll("[customID='user-job-list']").forEach(element => {
-        element.innerHTML += `<option>${jobName}</option>`;
-    });
-    //show job tab button
-    var jobTabButtons = document.querySelectorAll(".job-tab");
-    jobTabButtons[index].style.display = "block";
-    jobTabButtons[index].innerHTML = jobName;
-    //set text area resize to none prior to cloning
-    jobElement.querySelector("[customID='sample-text']").style.resize = "none";
-    return jobElement
-}
-
 function updateJobWords(jobElement, value){
     let wordCountElement = jobElement.querySelector("[customID='job-word-count']");
 
@@ -247,6 +226,28 @@ function updateJobWords(jobElement, value){
         progressBar.classList.add("stage-4");
         progressText.innerHTML = "Excellent!";
     }
+}
+
+function newJob(jobName){
+    let index = userJobs.length;
+    let jobElement = document.querySelectorAll("[customID='job-container']")[index];
+    //add job name to job Element
+    jobElement.setAttribute("jobID", -1);
+    jobElement.querySelector("[customID='job-name']").value = jobName;
+    userJobs.push(jobName);
+    //increase job count
+    document.querySelector("[customID='job-count']").innerHTML = String(userJobs.length)+"/"+String(maxJobs);
+    document.querySelectorAll("[customID='user-job-list']").forEach(element => {
+        element.innerHTML += `<option>${jobName}</option>`;
+    });
+    //show job tab button
+    var jobTabButtons = document.querySelectorAll(".job-tab");
+    jobTabButtons[index].style.display = "block";
+    jobTabButtons[index].innerHTML = jobName;
+    //set text area resize to none prior to cloning
+    jobElement.querySelector("[customID='sample-text']").style.resize = "none";
+    updateJobWords(jobElement, 0);
+    return jobElement
 }
 
 function newSample(jobElement, sampleWrapper, completion) {
@@ -1177,7 +1178,7 @@ function submitQuestion(socket) {
     if (empty.length==0) {
         document.querySelector("[customID='question-word-count']").innerHTML = "__";
         document.querySelector("[customID='question-score']").innerHTML = "";
-        
+
         var sourcesContainer = document.querySelector("[customID='question-sources-container']");
         if(searchElement.getAttribute("on")==="false"){
             sourcesContainer.style.display = "none";
