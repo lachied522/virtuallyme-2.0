@@ -196,8 +196,7 @@ function detectGPT(container, score){
 function updateJobWords(jobElement, value){
     let wordCountElement = jobElement.querySelector("[customID='job-word-count']");
 
-    wordCountElement.innerHTML = Math.max(value, 0);
-    jobElement.querySelector("[customID='samples-empty-text']").style.display = "none";
+    wordCountElement.innerHTML = String(Math.max(value, 0));
     
     //progress bar logic
     let progressBar = jobElement.querySelector(".progress-bar-inner");
@@ -205,26 +204,29 @@ function updateJobWords(jobElement, value){
     if (progressBar.classList.length>1) {
         progressBar.classList.remove(progressBar.classList[progressBar.classList.length-1]);
     }
-    
+    if (value<=0) {
+        jobElement.querySelector("[customID='samples-empty-text']").style.display = "block";
+    }
     if (value<=1000) {
         progressBar.classList.add("stage-0");
         progressText.innerHTML = "";
-
+        jobElement.querySelector("[customID='samples-empty-text']").style.display = "none";
     } else if (value<=3000) {
         progressBar.classList.add("stage-1");
         progressText.innerHTML = "Not bad";
-
+        jobElement.querySelector("[customID='samples-empty-text']").style.display = "none";
     } else if (value<=6500) {
         progressBar.classList.add("stage-2");
         progressText.innerHTML = "Good";
-
+        jobElement.querySelector("[customID='samples-empty-text']").style.display = "none";
     } else if (value<=1000) {
         progressBar.classList.add("stage-3");
         progressText.innerHTML = "Great!";
-
+        jobElement.querySelector("[customID='samples-empty-text']").style.display = "none";
     } else {
         progressBar.classList.add("stage-4");
         progressText.innerHTML = "Excellent!";
+        jobElement.querySelector("[customID='samples-empty-text']").style.display = "none";
     }
 }
 
@@ -799,7 +801,7 @@ function generateIdeas(socket) {
         socket.addEventListener("close", function handle_close()  {
             clearInterval(waitingInterval);
             isWaiting = false;
-            destination.textContent = "There was an error, please try again later. I apologise for the inconvenience.";
+            destination.textContent = "There was an error generating your response. Please try again.";
             this.removeEventListener("close", handle_close);
         });
         socket.send(JSON.stringify(data));
@@ -878,7 +880,7 @@ function submitRewrite(socket) {
         socket.addEventListener("close", function handle_close()  {
             clearInterval(waitingInterval);
             isWaiting = false;
-            destination.textContent = "There was an error, please try again later. I apologise for the inconvenience.";
+            destination.textContent = "There was an error generating your response. Please try again.";
             this.removeEventListener("close", handle_close);
         });
         socket.send(JSON.stringify(data));
@@ -1092,7 +1094,7 @@ function submitTask(socket) {
                 document.querySelector(".feedback-text").style.display = "none";
                 //update user words
                 const words = destination.textContent.split(" ").length;
-                document.querySelector("[customID='task-word-count']").innerHTML = `${words}`;
+                document.querySelector("[customID='task-word-count']").innerHTML = String(words);
                 //update detection score
                 detectGPT(document.querySelector("[customID='task-score']").parentElement, response.score);
                 //update user words
@@ -1128,7 +1130,7 @@ function submitTask(socket) {
         socket.addEventListener("close", function handle_close() {
             clearInterval(waitingInterval);
             isWaiting = false;
-            destination.textContent = "There was an error, please try again later. I apologise for the inconvenience.";
+            destination.textContent = "There was an error generating your response. Please try again.";
             this.removeEventListener("close", handle_close);
         });
         socket.send(JSON.stringify(data));
@@ -1202,7 +1204,7 @@ function submitQuestion(socket) {
                     this.removeEventListener("message", receive);
                     //update user words
                     var words = destination.textContent.split(" ").length;
-                    document.querySelector("[customID='question-word-count']").innerHTML = `${words}`;
+                    document.querySelector("[customID='question-word-count']").innerHTML = String(words);
                     //update detection score
                     detectGPT(document.querySelector("[customID='question-score']").parentElement, response.score);
                     //update user words
@@ -1241,7 +1243,7 @@ function submitQuestion(socket) {
         socket.addEventListener("close", function handle_close() {
             clearInterval(waitingInterval);
             isWaiting = false;
-            destination.textContent = "There was an error, please try again later. I apologise for the inconvenience.";
+            destination.textContent = "There was an error generating your response. Please try again.";
             this.removeEventListener("close", handle_close);
         });
         socket.send(JSON.stringify(data));
