@@ -34,8 +34,7 @@ GOOGLE_CSE_ID = os.getenv("GOOGLE_CSE_ID")
 
 GPTZERO_API_KEY = os.getenv("GPTZERO_API_KEY")
 
-#DB_BASE_URL = os.getenv("DB_BASE_URL")
-DB_BASE_URL = "http://127.0.0.1:5000"
+DB_BASE_URL = os.getenv("DB_BASE_URL")
 
 #tiktoken encoding
 enc = tiktoken.get_encoding("cl100k_base")
