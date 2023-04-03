@@ -330,6 +330,47 @@ function storeTask(tasksContainer, data){
     taskClone.querySelector(".feedback-button.positive").addEventListener("click", () => {
         feedbackAnimation(taskClone.querySelector(".feedback-bar"), "positive");
         sendFeedback(completion, "positive");
+        if (taskClone.hasAttribute("category")) {
+            storeFeedback(taskClone, "positive");
+        }
+    });
+    taskClone.querySelector(".feedback-button.negative").addEventListener("click", () => {
+        feedbackAnimation(taskClone.querySelector(".feedback-bar"), "negative");
+        sendFeedback(completion, "negative");
+        if (taskClone.hasAttribute("category")) {
+            storeFeedback(taskClone, "negative");
+        }
+    });
+    taskClone.querySelector(".feedback-button.positive.clicked").addEventListener("click", () => {
+        removeFeedbackAnimation(taskClone.querySelector(".feedback-bar"));
+        sendFeedback(completion, null);
+    });
+    taskClone.querySelector(".feedback-button.negative.clicked").addEventListener("click", () => {
+        removeFeedbackAnimation(taskClone.querySelector(".feedback-bar"));
+        sendFeedback(completion, null);
+    });
+    taskClone.style.display = "block";
+    module.after(taskClone);
+    tasksContainer.querySelector("[customID='empty-text']").style.display = "none";
+}
+
+function storeFeedback(module, feedback) {
+    let taskClone = module.cloneNode(true);
+    let category = module.getAttribute("category");
+    taskClone.querySelector(".features-tasks-title-container").addEventListener("click", () => {
+        featuresTaskOpen(taskClone);
+    });
+    taskClone.querySelector(".features-tasks-title-container").click();
+    if(feedback==="positive"){
+        feedbackAnimation(taskClone.querySelector(".feedback-bar"), "positive");
+    } else if(feedback==="negative") {
+        feedbackAnimation(taskClone.querySelector(".feedback-bar"), "negative");
+    }
+    //feedback button functionality
+    let completion = taskClone.querySelector("[customID='tasks-body']").innerHTML;
+    taskClone.querySelector(".feedback-button.positive").addEventListener("click", () => {
+        feedbackAnimation(taskClone.querySelector(".feedback-bar"), "positive");
+        sendFeedback(completion, "positive");
     });
     taskClone.querySelector(".feedback-button.negative").addEventListener("click", () => {
         feedbackAnimation(taskClone.querySelector(".feedback-bar"), "negative");
@@ -343,11 +384,24 @@ function storeTask(tasksContainer, data){
         removeFeedbackAnimation(taskClone.querySelector(".feedback-bar"));
         sendFeedback(completion, null);
     });
-    taskClone.style.display = "block";
-    module.after(taskClone);
-    tasksContainer.querySelector("[customID='empty-text']").style.display = "none";
-  }
-
+    if (category=="task") {
+        let savedTasks = document.querySelector("#saved-tasks");
+        savedTasks.insertBefore(taskClone, savedTasks.children[1]);
+        savedTasks.querySelector("[customID='empty-text']").style.display = "none";
+    } else if (category=="question") {
+        let savedTasks = document.querySelector("#saved-questions");
+        savedTasks.insertBefore(taskClone, savedTasks.children[1]);
+        savedTasks.querySelector("[customID='empty-text']").style.display = "none";
+    } else if (category=="rewrite") {
+        let savedTasks = document.querySelector("#saved-rewrites");
+        savedTasks.insertBefore(taskClone, savedTasks.children[1]);
+        savedTasks.querySelector("[customID='empty-text']").style.display = "none";
+    } else if (category=="idea") {
+        let savedTasks = document.querySelector("#saved-ideas");
+        savedTasks.insertBefore(taskClone, savedTasks.children[1]);
+        savedTasks.querySelector("[customID='empty-text']").style.display = "none";
+    }
+}
 
 function getUser(counter = 0){
     if(counter>=3){
@@ -421,8 +475,9 @@ function getUser(counter = 0){
             }
             if (data.user.length>0||data.words>0) {
                 //hide welcome popup
-                document.querySelector(".welcome-popup").style.display = "none"; 
+                document.querySelector(".welcome-popup").remove();
             }
+            //hide preloader
             hidePreloader();
         })
         .catch(error => {
@@ -870,7 +925,7 @@ function submitRewrite(socket) {
                 updateUserWords(userWordCount+words);
                 //store task
                 var rewritesContainer = document.querySelector("#recent-rewrites");
-                storeTask(rewritesContainer, {"prompt": `Rewrite the following: ${textElement.value.slice(0, 120)}`, "completion": destination.textContent, "score": response.score});
+                storeTask(rewritesContainer, {"prompt": `Rewrite: ${textElement.value.slice(0, 120)}...`, "completion": destination.textContent, "score": response.score});
                 var taskLength = rewritesContainer.querySelectorAll(".module").length;
                 if(taskLength-1>5){
                     rewritesContainer.querySelectorAll(".module")[taskLength-1].remove();
@@ -895,7 +950,7 @@ function submitRewrite(socket) {
 }
 
 function searchToggle(searchElement){
-    if(searchElement.getAttribute("on")==="true"){
+    if (searchElement.getAttribute("on")==="true") {
         searchElement.setAttribute("on", "false");
     } else {
         searchElement.setAttribute("on", "true");
@@ -1036,6 +1091,7 @@ function submitTask(socket) {
     var form = document.querySelector("[customID='submit-task']");
     var typeElement = form.querySelector("[customInput='type']");
     var topicElement = form.querySelector("[customInput='topic']");
+    var lengthElement = form.querySelector("[customID='output-length']");
     var searchElement = form.querySelector("[customID='search-toggle']");
     //get ID of selected job
     var jobIndex = form.querySelector("[customID='user-job-list']").selectedIndex-1;
@@ -1061,6 +1117,7 @@ function submitTask(socket) {
         "type": typeElement.value, 
         "topic": topicElement.value, 
         "additional": additionalElement.value,
+        "length": lengthElement.value,
         "search": searchElement.getAttribute("on")
     };
     //if neither type or topic element is missing

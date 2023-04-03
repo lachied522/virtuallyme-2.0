@@ -34,7 +34,8 @@ GOOGLE_CSE_ID = os.getenv("GOOGLE_CSE_ID")
 
 GPTZERO_API_KEY = os.getenv("GPTZERO_API_KEY")
 
-DB_BASE_URL = os.getenv("DB_BASE_URL")
+#DB_BASE_URL = os.getenv("DB_BASE_URL")
+DB_BASE_URL = "http://127.0.0.1:5000"
 
 #tiktoken encoding
 enc = tiktoken.get_encoding("cl100k_base")
@@ -361,7 +362,8 @@ async def websocket_endpoint(websocket: WebSocket):
                 category = data["type"]
                 topic = data["topic"]
                 additional = data["additional"]
-                search = data["search"]=="true"
+                length = int(data["length"])
+                search = data["search"]=="true" #bool
 
                 #search web and get user data simultaneously 
                 get_user_task = asyncio.create_task(get_data(user, job))
@@ -374,7 +376,10 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 samples = await get_user_task
 
-                maxlength = 2000-len(additional.split())-len(search_result["result"].split()) #prompt limit 3097 tokens (4097-1000 for completion)
+                length_tokens = round(length*4/3) #one token ~ 3/4 word
+                margin = 400 #allow for uncounted tokens and fluctuations in token count
+
+                maxlength = 4097 - length_tokens - len(additional.split())*4/3 - len(search_result["result"].split())*4/3 - margin #prompt limit 4097 tokens
                 messages = construct_messages(samples, maxlength, topic)
 
                 if search and search_result["result"] != "":
@@ -390,7 +395,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     messages.append({"role": "user", "content": f"Using a high degree of variation in your structure, syntax, and semantics, write a {category} about {topic}. {additional}\n"})
                     logit_bias = {}
             
-                max_tokens, temperature, presence_penalty = 1000, 1.2, 0.3
+                max_tokens, temperature, presence_penalty = length_tokens, 1.2, 0.3
                 prompt = f"Write a(n) {category} about {topic}." 
                 sources = search_result["sources"]
 
@@ -442,7 +447,11 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 samples = await get_data(user, job)
 
-                maxlength = 2000-len(text.split())-len(additional.split()) #prompt limit 3097 tokens (4097-1000 for completion)
+                #prompt must accomodate raw text in input and modified text in output
+                length_tokens = round(len(text.split())*4/3 )
+                margin = 400 #allow for uncounted tokens and fluctuations in token count
+
+                maxlength = 4097 - length_tokens - len(text.split())*4/3 - len(additional.split())*4/3 - margin #prompt limit 4097 tokens
                 messages = construct_messages(samples, maxlength, text)
 
                 if len([d for d in messages if d["role"]=="user"]) > 0:
@@ -454,9 +463,9 @@ async def websocket_endpoint(websocket: WebSocket):
                     messages.append({"role": "user", "content": f"Rewrite the following text using a high degree of variation in your structure, syntax, and semantics. {additional} Text: {text}\n"})
                     logit_bias = {}
             
-                max_tokens, temperature, presence_penalty = 1000, 1.2, 0
+                max_tokens, temperature, presence_penalty = length_tokens, 1.2, 0
                 #define prompt to be stored in DB
-                prompt = f"Rewrite the following: {text[:120]}"
+                prompt = f"Rewrite: {text[:120]}..."
                 sources = []
 
             if data["category"]=="idea":

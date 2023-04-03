@@ -74,6 +74,7 @@ function submitTask(socket) {
   var form = document.querySelector("[customID='submit-task']");
   var typeElement = form.querySelector("[customInput='type']");
   var topicElement = form.querySelector("[customInput='topic']");
+  var lengthElement = form.querySelector("[customID='output-length']");
 
   var empty = [];
   if(typeElement.value===""){
@@ -90,6 +91,7 @@ function submitTask(socket) {
       "type": typeElement.value, 
       "topic": topicElement.value, 
       "additional": additionalElement.value,
+      "length": lengthElement.value,
       "search": "false"
   };
 
