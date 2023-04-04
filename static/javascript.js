@@ -748,7 +748,7 @@ function configTask(taskWrapper){
     });
 }
 
-function share(jobElement, counter=0){
+function share(jobElement, counter = 0){
     //call sync function first
     //syncJob(jobNumber);
     const url = "https://virtuallyme.onrender.com/share_job";
@@ -985,7 +985,6 @@ function pageLoad(){
         jobElement.querySelector("[customID='add-button']").addEventListener("click", () => {
             addSample(jobElement);
         });
-
         jobElement.querySelector("[customID='save-button']").addEventListener("click", () => {
             syncJob(jobElement);
         });
@@ -1355,7 +1354,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
 setInterval(() => {
     //check if job is saved, save if not
-    document.querySelectorAll("[customID='job-container']").forEach(jobElement => {
+    document.querySelectorAll("[customID='job-container']").forEach((jobElement, index) => {
         if(jobElement.hasAttribute("saved")){
             if(jobElement.getAttribute("saved")==="false"){
                 syncJob(jobElement);

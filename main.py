@@ -105,13 +105,12 @@ def construct_messages(samples, maxlength, current_prompt):
     cosine_similarities = rank_samples(current_prompt, [d["completion"] for d in samples])
     ranked_samples = [item for index, item in sorted(enumerate(samples), key = lambda x: cosine_similarities[x[0]], reverse=True)]
     for prompt_completion in [d for d in ranked_samples if d["feedback"]!="negative"]:
-        if length+len(prompt_completion["completion"].split())+len(prompt_completion["prompt"].split()) > maxlength:
+        if length+len(prompt_completion["completion"].split())+len(prompt_completion["prompt"].split()) >= maxlength:
             break
         else:
             messages.append({"role": "assistant", "content": prompt_completion["completion"]})
-            ##messages.append({"role": "user", "content": "Using the idiolect, structure, syntax, reasoning, and rationale of your new persona, " + prompt_completion["prompt"]})
             messages.append({"role": "user", "content": "Using the idiolect, structure, syntax, reasoning, and rationale of your new persona, "})
-            length += len(prompt_completion["prompt"].split())+len(prompt_completion["completion"].split())+12
+            length += len(prompt_completion["prompt"].split())+len(prompt_completion["completion"].split())+20 #add a buffer corresponding to hidden tokens in the prompt
     
     messages.append({"role": "system", "content": role})
     #reverse order of messages so most relevant samples appear down the bottom
@@ -375,8 +374,8 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 samples = await get_user_task
 
-                length_tokens = round(length*4/3) #one token ~ 3/4 word
-                margin = 400 #allow for uncounted tokens and fluctuations in token count
+                length_tokens = round(length*4/3)  #one token ~ 3/4 word
+                margin = 500  #allow for uncounted tokens and fluctuations in token count
 
                 maxlength = 4097 - length_tokens - len(additional.split())*4/3 - len(search_result["result"].split())*4/3 - margin #prompt limit 4097 tokens
                 messages = construct_messages(samples, maxlength, topic)
@@ -447,8 +446,8 @@ async def websocket_endpoint(websocket: WebSocket):
                 samples = await get_data(user, job)
 
                 #prompt must accomodate raw text in input and modified text in output
-                length_tokens = round(len(text.split())*4/3 )
-                margin = 400 #allow for uncounted tokens and fluctuations in token count
+                length_tokens = round(len(text.split())*4/3)
+                margin = 500 #allow for uncounted tokens and fluctuations in token count
 
                 maxlength = 4097 - length_tokens - len(text.split())*4/3 - len(additional.split())*4/3 - margin #prompt limit 4097 tokens
                 messages = construct_messages(samples, maxlength, text)
@@ -461,8 +460,8 @@ async def websocket_endpoint(websocket: WebSocket):
                     messages = [d for d in messages if d["role"]!="system"]
                     messages.append({"role": "user", "content": f"Rewrite the following text using a high degree of variation in your structure, syntax, and semantics. {additional} Text: {text}\n"})
                     logit_bias = {}
-            
-                max_tokens, temperature, presence_penalty = length_tokens, 1.2, 0
+
+                max_tokens, temperature, presence_penalty = length_tokens + 200, 1.2, 0 #allow extra room  in response for rewrite
                 #define prompt to be stored in DB
                 prompt = f"Rewrite: {text[:120]}..."
                 sources = []
@@ -522,6 +521,7 @@ async def websocket_endpoint(websocket: WebSocket):
         pass
     except ConnectionClosedError as e:
         print(f"Connection closed with error: {e}")
+        pass
     except Exception as e:
         print(e)
         await websocket.close()
