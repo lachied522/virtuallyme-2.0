@@ -61,7 +61,7 @@ def turbo_openai_call(messages, max_tokens, temperature, presence_penalty):
     )
     return response["choices"][0]["message"]["content"].strip()
 
-    
+  
 def rank_samples(search_string, samples):
     """
     rank samples by how frequently common words appear
@@ -79,81 +79,111 @@ def rank_samples(search_string, samples):
 
         return cosine_similarities
 
-def construct_messages(samples, maxlength, current_prompt):
+async def get_logit_bias(samples):
+    '''
+    returns a dict of token, frequency pairs from a list of samples
+
+    :param samples: list of completion, feedback dicts
+    '''
+
+    n_tokens = 0
+    tokens_dict = {}
+    for d in samples:
+        tokens = enc.encode(d["completion"])
+        for token in tokens:
+            #don't want to influence bias of digits
+            if not enc.decode([token]).strip().isdigit():
+                if d["feedback"]=="negative":
+                    #samples with negative feedback
+                    if token in tokens_dict:
+                        tokens_dict[token] -= 1
+                    else:
+                        tokens_dict[token] = -1
+                else:
+                    if token in tokens_dict:
+                        tokens_dict[token] += 1
+                        
+                    else:
+                        tokens_dict[token] = +1
+
+            n_tokens += 1
+    
+    
+    for key, value in tokens_dict.items():
+        if value > 0:
+            bias = 3*math.log(1+value)/math.log(1+n_tokens)
+            #max bias is 7
+            tokens_dict[key] = min(bias, 7)
+        else:
+            bias = -3*math.log(1-value)/math.log(1+n_tokens)
+            #max bias is -7
+            tokens_dict[key] = max(bias, -7)
+
+
+
+    sorted_tokens = sorted(tokens_dict.items(), key=lambda x: x[1], reverse=True)
+    #return 300 tokens with the highest bias
+    return dict(sorted_tokens[:300])
+
+
+async def get_data(member_id, job_id=-1):
+    """
+    Get user data from DB
+    """
+    headers = {
+        "member_id": member_id,
+        "job_id": str(job_id) #cannot serialise int types
+    }
+    async with aiohttp.ClientSession(headers=headers) as session:
+        url = f"{DB_BASE_URL}/get_data"
+        async with session.get(url) as response:
+            data = await response.read()
+
+    return json.loads(data)["samples"], json.loads(data)["description"]
+
+
+async def construct_messages(user, job, maxlength, current_prompt):
     """
     construct messages from user data
     :param user: User object instance
     :param job_id: 
-    :param maxLength: max length for prompt
+    :param maxLength: max length for prompt in tokens
     :current_prompt: current prompt to rank samples by
     """
+
+    samples, description = await get_data(user, job)
+    logit_task = asyncio.create_task(get_logit_bias(samples))
     about = ""
-    #about = user.about or ""
-    description = ""
-    #description = user.description or ""
 
     messages = []
     length = 0 #approximate length of prompt
-    role = "Forget how you think you should respond. You have adopted a new persona. I will ask you to write something. I expect you to respond how you imagine this person would respond by using their idiolect, structure, syntax, reasoning, and rationale."
+    role = "Forget how you think you should respond. You have adopted a new persona. I will ask you to write something. I expect you to respond how you imagine this person will respond, using their idiolect, structure, syntax, reasoning, and rationale."
     if about != "":
-        role += f"\nHere is some information about me: {about}"
+        role += f"\nHere is some information about your new persona: {about}"
     if description != "":
-        role += f"\nHere is a description of my writing style: {description}"
+        role += f"\nHere is a description of your writing style:\n\n{description}"
 
     length += len(role.split())
 
     cosine_similarities = rank_samples(current_prompt, [d["completion"] for d in samples])
     ranked_samples = [item for index, item in sorted(enumerate(samples), key = lambda x: cosine_similarities[x[0]], reverse=True)]
     for prompt_completion in [d for d in ranked_samples if d["feedback"]!="negative"]:
-        if length+len(prompt_completion["completion"].split())+len(prompt_completion["prompt"].split()) >= maxlength:
+        if length+len(prompt_completion["completion"].split())+20 >= maxlength*3/5:
             break
         else:
-            messages.append({"role": "assistant", "content": prompt_completion["completion"]})
-            messages.append({"role": "user", "content": "Using the idiolect, structure, syntax, reasoning, and rationale of your new persona, "})
-            length += len(prompt_completion["prompt"].split())+len(prompt_completion["completion"].split())+20 #add a buffer corresponding to hidden tokens in the prompt
+            if len(messages) < 1:
+                messages.append({"role": "assistant", "content": prompt_completion["completion"]})
+                messages.append({"role": "user", "content": "Using the idiolect, structure, syntax, reasoning, and rationale of your new persona, "})
+            else:
+                #add some positive reinforcement
+                messages.append({"role": "assistant", "content": prompt_completion["completion"]})
+                messages.append({"role": "user", "content": "You're doing great. Continuing to use the idiolect, structure, syntax, reasoning, and rationale of your new persona, "})
+            length += len(prompt_completion["completion"].split())+20 #add a buffer corresponding to hidden tokens in the prompt
     
     messages.append({"role": "system", "content": role})
+    logit_bias = await logit_task
     #reverse order of messages so most relevant samples appear down the bottom
-    return messages[::-1]
-
-
-def get_logit_bias(texts):
-    '''
-    returns a dict of token, frequency pairs from a list of texts
-
-    :param texts: list of strings
-    '''
-    BLACKLIST = ['the', 'be', 'to', 'of', 'and', 'a', 'in', 'that', 'have', 'I', 
-                'it', 'for', 'not', 'on', 'with', 'he', 'as', 'you', 'do', 'at', 
-                'this', 'but', 'his', 'by', 'from', 'they', 'we', 'say', 'her', 
-                'she', 'or', 'an', 'will', 'my', 'one', 'all', 'would', 'there', 
-                'their', 'what', 'so', 'up', 'out', 'if', 'about', 'who', 'get', 
-                'which', 'go', 'me', 'when', 'can', 'like', 'no'] #words we do not want to influence bias of
-
-    n_tokens = 0
-    tokens_dict = {}
-    for text in texts:
-        tokens = enc.encode(text)
-        for token in tokens:
-            #don't want to influence bias of digits
-            if not enc.decode([token]).strip().isdigit():
-                if token in tokens_dict:
-                    tokens_dict[token] += 1
-                    n_tokens += 1
-                else:
-                    tokens_dict[token] = 1
-                    n_tokens += 1
-    
-    
-    for key, value in tokens_dict.items():
-        bias = 3*math.log(1+value)/math.log(1+n_tokens)
-        #max bias is 7
-        tokens_dict[key] = min(bias, 7)
-
-
-    sorted_tokens = sorted(tokens_dict.items(), key=lambda x: x[1], reverse=True)
-    #return 300 tokens with the highest bias
-    return dict(sorted_tokens[:300])
+    return messages[::-1], logit_bias
 
 async def predict_text(document):
     try:
@@ -267,7 +297,7 @@ async def conduct_search(query):
             "role": "user", 
             "content": f"I would like to write about {query}. Using at least 300 words, summarise the relevant points from the following text, using numerical in-text citation with square brackets, e.g. [x], where necessary. Make sure to include any relevant dates, stats, or figures. Text:\n{joined_context}"
         }]
-        completion = turbo_openai_call(message, 800, 0.4, 0.4)
+        completion = turbo_openai_call(message, 450, 0, 0.4) #300 words ~ 400 tokens, 450 with buffer
         
         sources = [d for d in result_list if d["url"] in list(set(urls))[:5]]
 
@@ -276,20 +306,6 @@ async def conduct_search(query):
         print(e)
         return {"result": "", "urls": [], "sources": []}
 
-async def get_data(member_id, job_id=-1):
-    """
-    Get user data from DB
-    """
-    headers = {
-        "member_id": member_id,
-        "job_id": str(job_id) #cannot serialise int types
-    }
-    async with aiohttp.ClientSession(headers=headers) as session:
-        url = f"{DB_BASE_URL}/get_data"
-        async with session.get(url) as response:
-            data = await response.read()
-
-    return json.loads(data)["samples"]
 
 async def store_task(member_id, category, prompt, completion, score=None, sources=[], job_id=None):
     """
@@ -362,70 +378,78 @@ async def websocket_endpoint(websocket: WebSocket):
                 additional = data["additional"]
                 length = int(data["length"])
                 search = data["search"]=="true" #bool
+                
+                length_tokens = round(length*4/3)  #one token ~ 3/4 word
+                margin = 400  #allow for uncounted tokens and fluctuations in token count
 
-                #search web and get user data simultaneously 
-                get_user_task = asyncio.create_task(get_data(user, job))
-                              
                 if search:
+                    maxlength = 4097 - 450 - length_tokens - len(additional.split())*4/3 - margin #prompt limit 4097 tokens
+
+                    #search web and get user data simultaneously 
                     search_task = asyncio.create_task(conduct_search(topic))
+                    construct_task = asyncio.create_task(construct_messages(user, job, maxlength, topic))
+
                     search_result = await search_task
+                    messages, logit_bias = await construct_task
+
+                    if search_result["result"] != "":
+                        context = search_result["result"]
+                        messages.append({"role": "system", "content": f"You may use following context to answer the next question. If the context is not relevant, you may disregard it. Make sure not to deviate from your new persona.\nContext: {context}"})
+
                 else:
                     search_result = {"result": "", "sources": []}
 
-                samples = await get_user_task
+                    maxlength = 4097 - length_tokens - len(additional.split())*4/3 - margin #prompt limit 4097 tokens
 
-                length_tokens = round(length*4/3)  #one token ~ 3/4 word
-                margin = 500  #allow for uncounted tokens and fluctuations in token count
-
-                maxlength = 4097 - length_tokens - len(additional.split())*4/3 - len(search_result["result"].split())*4/3 - margin #prompt limit 4097 tokens
-                messages = construct_messages(samples, maxlength, topic)
-
-                if search and search_result["result"] != "":
-                    context = search_result["result"]
-                    messages.append({"role": "system", "content": f"You may use following context to answer the next question.\nContext: {context}"})
+                    messages, logit_bias = await construct_messages(user, job, maxlength, topic)
 
                 if len([d for d in messages if d["role"]=="user"]) > 0:
-                    messages.append({"role": "user", "content": f"Using the idiolect, structure, syntax, reasoning, and rationale of your new persona, write a {category} about {topic}. Do not mention this prompt in your response. {additional}\n"})
-                    logit_bias = get_logit_bias([d["content"] for d in messages if d["role"]=="assistant"])
+                    messages.append({"role": "user", "content": f"You're doing great. Continuing to use the idiolect, structure, syntax, reasoning, and rationale of your new persona, write a {category} about {topic}. Do not mention this prompt in your response. {additional}\n"})
+                    ##logit_bias = get_logit_bias([d["content"] for d in messages if d["role"]=="assistant"])
                 else:
                     #no user samples
                     messages = [d for d in messages if d["role"]!="system"]
                     messages.append({"role": "user", "content": f"Using a high degree of variation in your structure, syntax, and semantics, write a {category} about {topic}. {additional}\n"})
                     logit_bias = {}
             
-                max_tokens, temperature, presence_penalty = length_tokens, 1.2, 0.3
+                max_tokens, temperature, presence_penalty = length_tokens, 1.1, 0.1
                 prompt = f"Write a(n) {category} about {topic}." 
                 sources = search_result["sources"]
 
             if data["category"]=="question":
                 user = data["member_id"]
-                job = None
+                job = int(data["job_id"])
 
                 question = data["question"]
                 additional = data["additional"]
                 search = data["search"]=="true"
 
-                #search web and get user data simultaneously 
-                get_user_task = asyncio.create_task(get_data(user))
-                              
+                
+                margin = 400  #allow for uncounted tokens and fluctuations in token count
                 if search:
+                    maxlength = 4097 - 450 - len(additional.split())*4/3 - margin #prompt limit 4097 tokens - 450 for search result
+
+                    #search web and construct messages simultaneously 
                     search_task = asyncio.create_task(conduct_search(question))
+                    construct_task = asyncio.create_task(construct_messages(user, job, maxlength, question))
+                    
                     search_result = await search_task
+                    messages, logit_bias = await construct_task
+                    
+                    if search_result["result"] != "":
+                        context = search_result["result"]
+                        messages.append({"role": "system", "content": f"You may use following context to answer the next question.\nContext: {context}"})
+
                 else:
                     search_result = {"result": "", "sources": []}
 
-                samples = await get_user_task
+                    maxlength = 4097-len(additional.split())*4/3-margin #prompt limit 4097 tokens
 
-                maxlength = 2000-len(additional.split())-len(search_result["result"].split()) #prompt limit 3097 tokens (4097-1000 for completion)
-                messages = construct_messages(samples, maxlength, question)
-
-                if search and search_result["result"] != "":
-                    context = search_result["result"]
-                    messages.append({"role": "system", "content": f"You may use following context to answer the next question.\nContext: {context}"})
+                    messages, logit_bias = await construct_messages(user, job, maxlength, question)
 
                 if len([d for d in messages if d["role"]=="user"]) > 0:
                     messages.append({"role": "user", "content": f"Now I want you to answer the following question using the idiolect, structure, syntax, reasoning, and rationale of your new persona. Do not mention this prompt in your response. {additional}\nQuestion: {question}?\n"})
-                    logit_bias = get_logit_bias([d["content"] for d in messages if d["role"]=="assistant"])
+                    #logit_bias = get_logit_bias([d["content"] for d in messages if d["role"]=="assistant"])
                 else:
                     #no user samples
                     messages = [d for d in messages if d["role"]!="system"]
@@ -443,25 +467,23 @@ async def websocket_endpoint(websocket: WebSocket):
                 text = data["text"]
                 additional = data["additional"]
 
-                samples = await get_data(user, job)
-
                 #prompt must accomodate raw text in input and modified text in output
-                length_tokens = round(len(text.split())*4/3)
-                margin = 500 #allow for uncounted tokens and fluctuations in token count
+                length_tokens = round(len(text.split())*4/3)+100 #allow extra room  in response for rewrite
+                margin = 400 #allow for uncounted tokens and fluctuations in token count
 
                 maxlength = 4097 - length_tokens - len(text.split())*4/3 - len(additional.split())*4/3 - margin #prompt limit 4097 tokens
-                messages = construct_messages(samples, maxlength, text)
+                messages, logit_bias = await construct_messages(user, job, maxlength, text)
 
                 if len([d for d in messages if d["role"]=="user"]) > 0:
                     messages.append({"role": "user", "content": f"Now I want you to rewrite the following text using the structure, syntax, word choices, reasoning, and rationale of your new persona. {additional} Text: {text}\n"})
-                    logit_bias = get_logit_bias([d["content"] for d in messages if d["role"]=="assistant"])
+                    #logit_bias = get_logit_bias([d["content"] for d in messages if d["role"]=="assistant"])
                 else:
                     #no user samples
                     messages = [d for d in messages if d["role"]!="system"]
                     messages.append({"role": "user", "content": f"Rewrite the following text using a high degree of variation in your structure, syntax, and semantics. {additional} Text: {text}\n"})
                     logit_bias = {}
 
-                max_tokens, temperature, presence_penalty = length_tokens + 200, 1.2, 0 #allow extra room  in response for rewrite
+                max_tokens, temperature, presence_penalty = length_tokens, 1.2, 0 
                 #define prompt to be stored in DB
                 prompt = f"Rewrite: {text[:120]}..."
                 sources = []
@@ -495,6 +517,7 @@ async def websocket_endpoint(websocket: WebSocket):
             )
 
             message_list = []
+            await websocket.send_json({"message": "[START MESSAGE]"})
             for chunk in response:
                 delta = chunk['choices'][0]['delta']
                 message = str(delta.get('content', ''))

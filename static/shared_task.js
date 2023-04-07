@@ -101,18 +101,16 @@ function submitTask(socket) {
         waiting(destination);
         isWaiting = true;
         socket.addEventListener("message", function receive(event) {
-            if (isWaiting) {
-                destination.textContent = "";
-                clearInterval(waitingInterval);
-                isWaiting = false;
-            }
             let response = JSON.parse(event.data);
-            //handle sources
             let data = response.message;
-            if (data!=="[END MESSAGE]") {
+            if (data==="[START MESSAGE]") {
+                clearInterval(waitingInterval);
+                destination.textContent = "";
+            } else if (data!=="[END MESSAGE]") {
                 destination.textContent += data;
                 destination.scrollTop = destination.scrollHeight;
             } else {
+                isWaiting = false;
                 this.removeEventListener("message", receive);
                 //reset feedback bar
                 var words = destination.textContent.split(" ").length;
@@ -132,7 +130,7 @@ function submitTask(socket) {
         socket.addEventListener("close", function handle_close() {
             clearInterval(waitingInterval);
             isWaiting = false;
-            destination.textContent = "There was an error, please try again later. I apologise for the inconvenience.";
+            destination.textContent = "There was an error generating your response. Please try again.";
             this.removeEventListener("close", handle_close);
         });
         socket.send(JSON.stringify(data));
