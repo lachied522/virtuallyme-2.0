@@ -1514,7 +1514,7 @@ function editComposition(module) {
     let score = scoreContainer.querySelector(".text-200.detection-text").innerHTML;
 
     if (parseFloat(score)) {
-        detectGPT(document.querySelector("[customID='compose-score']").parentElement, parsefloat(score));
+        detectGPT(document.querySelector("[customID='compose-score']").parentElement, parseFloat(score));
     } else {
         //pass
     }
