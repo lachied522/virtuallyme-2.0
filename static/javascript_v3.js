@@ -181,7 +181,7 @@ function detectGPT(container, score){
     if (score<0) {
         container.querySelector(".text-200.detection-text").innerHTML = `NA`;
     } else {
-        container.querySelector(".text-200.detection-text").innerHTML = `${score}%`
+        container.querySelector(".text-200.detection-text").innerHTML = `${score}%`;
         if (score<=33) {
             container.querySelector(".text-200.detection-text").style.color = "#05c168"; //green
         } else if (score<=67) {
@@ -304,16 +304,8 @@ function storeTask(tasksContainer, data){
     }
     if (data.hasOwnProperty('score')) {
         if (data.score!==null && data.score>-1) {
-            let detectionContainer = taskClone.querySelector(".detector-container");
-            detectionContainer.querySelector(".text-200.detection-text").innerHTML = `${data.score}%`
-            if (data.score<=33) {
-                detectionContainer.querySelector(".text-200.detection-text").style.color = "#05c168"; //green
-            } else if (data.score<=67) {
-                detectionContainer.querySelector(".text-200.detection-text").style.color = "#ffb016"; //yellow
-            } else {
-                detectionContainer.querySelector(".text-200.detection-text").style.color = "#ff5a65"; //red
-            }
-            detectionContainer.style.display = "flex"; //display the container
+            taskClone.querySelector(".detector-container");
+            detectGPT(taskClone.querySelector(".detector-container"), data.score);
         }
     }
     if (data.hasOwnProperty('feedback')) {
@@ -349,6 +341,41 @@ function storeTask(tasksContainer, data){
         removeFeedbackAnimation(taskClone.querySelector(".feedback-bar"));
         sendFeedback(completion, null);
     });
+    taskClone.style.display = "block";
+    module.after(taskClone);
+    tasksContainer.querySelector("[customID='empty-text']").style.display = "none";
+}
+
+
+function storeComposition(tasksContainer, data) {
+    let module = tasksContainer.querySelectorAll(".module")[0];
+    let taskClone = module.cloneNode(true);
+
+    taskClone.querySelector("[customID='tasks-header']").innerHTML = data.prompt;
+    taskClone.querySelector("[customID='tasks-body']").innerHTML = data.completion;
+
+    let score = -1;
+
+    if (data.hasOwnProperty('score')) {
+        if (data.score!==null && data.score>-1) {
+            score = data.score;
+
+            taskClone.querySelector(".detector-container");
+            detectGPT(taskClone.querySelector(".detector-container"), data.score);
+        }
+    }
+
+    taskClone.querySelector(".features-tasks-title-container").addEventListener("click", () => {
+        featuresTaskOpen(taskClone);
+    });
+
+    taskClone.querySelector("[customID='continue-composition']").addEventListener("click", () => {
+        document.querySelector("#top").scrollIntoView({ behavior: "smooth" });
+        editComposition(taskClone);
+        taskClone.setAttribute("edit", "true");
+    });
+
+    taskClone.setAttribute("edit", "false"); //keep track of whether composition is currently being editted
     taskClone.style.display = "block";
     module.after(taskClone);
     tasksContainer.querySelector("[customID='empty-text']").style.display = "none";
@@ -422,7 +449,7 @@ function getUser(counter = 0){
                 document.querySelector(".description-empty-text").style.display = "none";
             }
             //store task data
-            for(let i = 0; i < data.tasks.length; i++){
+            for (let i = 0; i < data.tasks.length; i++) {
                 if (i<5) {
                     storeTask(document.querySelector("#recent-tasks"), data.tasks[i]);
                 } 
@@ -431,7 +458,7 @@ function getUser(counter = 0){
                 }
             }
             //store questions data
-            for(let i=0; i < data.questions.length; i++){
+            for (let i=0; i < data.questions.length; i++) {
                 if (i<5) {
                     storeTask(document.querySelector("#recent-questions"), data.questions[i]);
                 }
@@ -440,7 +467,7 @@ function getUser(counter = 0){
                 }
             }
             //store ideas data
-            for(let i=0; i < data.ideas.length; i++){
+            for (let i=0; i < data.ideas.length; i++) {
                 if (i<5) {
                     storeTask(document.querySelector("#recent-ideas"), data.ideas[i]);
                 }
@@ -449,12 +476,18 @@ function getUser(counter = 0){
                 }
             }
             //store rewrite data
-            for(let i = 0; i < data.rewrites.length; i++){
+            for (let i = 0; i < data.rewrites.length; i++) {
                 if (i<5) {
                     storeTask(document.querySelector("#recent-rewrites"), data.rewrites[i]);
                 }
                 if (data.rewrites[i].feedback==="positive") {
                     storeTask(document.querySelector("#saved-rewrites"), data.rewrites[i]);
+                }
+            }
+            //store compositions
+            for (let i = 0; i < data.compositions.length; i++) {
+                if (i<5) {
+                    storeComposition(document.querySelector("#recent-compositions"), data.compositions[i]);
                 }
             }
             //update user word count
@@ -692,7 +725,7 @@ function uploadFiles(jobElement, files) {
 }
 
 function removeSample(jobElement, sampleWrapper){
-    let sampleWords = sampleWrapper.querySelector("[customID='sample-text']").value.trim().split(" ").length;
+    let sampleWords = sampleWrapper.querySelector("[customID='sample-text']").value.split(" ").length;
     sampleWrapper.remove();
     //adjust word count
     let wordCountElement = jobElement.querySelector("[customID='job-word-count']");
@@ -916,7 +949,7 @@ function submitRewrite(socket) {
                 isWaiting = false;
                 this.removeEventListener("message", receive);
                 //update user words
-                var words = destination.textContent.split(" ").length;
+                let words = destination.textContent.trim().split(" ").length;
                 document.querySelector("[customID='rewrite-word-count']").innerHTML = `${words}`;
                 //update detection score
                 detectGPT(document.querySelector("[customID='rewrite-score']").parentElement, response.score);
@@ -950,7 +983,7 @@ function submitRewrite(socket) {
     }      
 }
 
-function searchToggle(searchElement){
+function searchToggle(searchElement) {
     if (searchElement.getAttribute("on")==="true") {
         searchElement.setAttribute("on", "false");
     } else {
@@ -958,7 +991,7 @@ function searchToggle(searchElement){
     }
 }
 
-function sendFeedback(completion, feedback){
+function sendFeedback(completion, feedback) {
     const url = "https://virtuallyme.onrender.com/handle_feedback";
     //get recent task
     var data = {
@@ -971,7 +1004,7 @@ function sendFeedback(completion, feedback){
         body: JSON.stringify(data),
         headers: {
             'Content-Type': 'application/json'
-        },
+        }
     });
 }
 
@@ -1149,7 +1182,7 @@ function submitTask(socket) {
                 document.querySelector(".feedback-bar").style.display = "flex";
                 document.querySelector(".feedback-text").style.display = "none";
                 //update user words
-                const words = destination.textContent.split(" ").length;
+                let words = destination.textContent.trim().split(" ").length;
                 document.querySelector("[customID='task-word-count']").innerHTML = String(words);
                 //update detection score
                 detectGPT(document.querySelector("[customID='task-score']").parentElement, response.score);
@@ -1253,7 +1286,7 @@ function submitQuestion(socket) {
                 isWaiting = false;
                 this.removeEventListener("message", receive);
                 //update user words
-                var words = destination.textContent.split(" ").length;
+                let words = destination.textContent.trim().split(" ").length;
                 document.querySelector("[customID='question-word-count']").innerHTML = String(words);
                 //update detection score
                 detectGPT(document.querySelector("[customID='question-score']").parentElement, response.score);
@@ -1308,14 +1341,285 @@ function submitQuestion(socket) {
     }             
 }
 
+
+
+function appendText(text) {
+    document.querySelector(".compose-output").value += text;
+
+    let optionsOutput = document.querySelector(".suggestions-container");
+    optionsOutput.style.display = "none";
+
+    let optionsContainers = optionsOutput.querySelectorAll(".option");
+    optionsContainers.forEach(element => {
+        element.innerHTML = "Please wait. . .";
+        element.parentElement.replaceWith(element.parentElement.cloneNode(true)); //remove event listeners
+    });
+    
+    //update current word count
+    let composeOutput = document.querySelector(".compose-output");
+    let words = composeOutput.value.trim().split(" ").length;
+    document.querySelector("[customID='compose-word-count']").innerHTML = words;
+    
+    //update user words 
+    updateUserWords(userWordCount+words);
+
+    if (words>50) {
+        //update detection score
+        let output = composeOutput.value;
+        //detect gpt
+        let url = `${WEB_SERVER_BASE_URL}/detect`;
+        let data = {
+            "text": String(output)
+        }
+        console.log(data);
+        fetch(url, {
+            method: "POST",
+            body: JSON.stringify(data),
+            headers: {
+                "Content-Type": "application/json"
+            }
+        })
+        .then(response => response.text())
+        .then(score => {
+            detectGPT(document.querySelector("[customID='compose-score']").parentElement, score);
+        })
+    }
+
+    //update DB
+    let value = text.split(" ").length;
+    let data = {
+        "member_id": member,
+        "value": value
+    }
+    fetch("https://virtuallyme.onrender.com/update_user_words", {
+        method: "POST",
+        body: JSON.stringify(data),
+        headers: {
+            "Content-Type": "application/json"
+        }
+    })
+}
+
+
+function compose(socket, request) {
+    if (isWaiting) {
+        //if still waiting, do nothing
+        return
+    } else if(userWordCount > userMonthlyWords){
+        showAlertBanner("You have reached your maximum word limit for this month");
+        return
+    }
+    let form = document.querySelector("[customID='compose-input']");
+    let typeElement = form.querySelector("[customInput='type']");
+    let topicElement = form.querySelector("[customInput='topic']");
+
+    var jobIndex = form.querySelector("[customID='user-job-list']").selectedIndex-1;
+    if(jobIndex<0||jobIndex>userJobs.length){
+        var jobID = -1
+    } else {
+        var jobID = document.querySelectorAll("[customID='job-container']")[jobIndex].getAttribute("jobID");
+    }
+    
+    let textElement = document.querySelector("[customID='compose-output']");
+
+    //check if either typeElement or topic are missing
+    var empty = [];
+    if (typeElement.value==="") {
+        empty.push(typeElement);
+    } else if (topicElement.value==="") {
+        empty.push(topicElement);
+    }
+
+    const data = {
+        "member_id": member,
+        "job_id": jobID,
+        "request": request,
+        "type": typeElement.value, 
+        "topic": topicElement.value,
+        "text": textElement.value
+    }
+
+    if (empty.length===0) {
+        //reset options elements
+        let optionsOutput = document.querySelector(".suggestions-container");
+        let optionsContainers = optionsOutput.querySelectorAll(".option");
+        optionsContainers.forEach((element, index) => {
+            element.innerHTML = "Please wait. . .";
+        })
+        //display options container
+        optionsOutput.style.display = "flex";
+        socket.addEventListener("message", function receive(event) {
+            let response = JSON.parse(event.data);
+            let data = response.message;
+            if (data==="[START MESSAGE]") {
+                optionsContainers.forEach(element => {
+                    element.innerHTML = "";
+                });
+            } else if (data!=="[END MESSAGE]") {
+                let index = response.index;
+                optionsContainers[index].innerHTML += data;
+            } else {
+                isWaiting = false;
+                this.removeEventListener("message", receive);
+                optionsContainers.forEach((element, index) => {
+                    element.parentElement.addEventListener("click", () => {
+                        text = element.innerHTML;
+                        appendText(text);
+                    })
+                });
+            }
+        })
+        socket.send(JSON.stringify(data));
+    } else {
+        var originalColor = empty[0].style.borderColor;
+        empty[0].style.borderColor = "#FFBEC2";
+        setTimeout(function() {
+            empty[0].style.borderColor = originalColor;
+        }, 1500);
+        return
+    }        
+}
+
+function editComposition(module) {
+    let prompt = module.querySelector("[customID='tasks-header']").innerHTML;
+    let text = module.querySelector("[customID='tasks-body']").innerHTML;
+
+    //save existing composition if there is one
+    let textElement = document.querySelector("[customID='compose-output']");
+    if (textElement.value.length>0) {
+        saveComposition();
+        textElement.value = text;
+    } else {
+        textElement.value = text;
+    }
+        
+    //extract type and topic from prompt
+    let regex = /Write a\(n\)\s+(.+)\s+about\s+(.+)/i; //i makes regex case-insensitive
+    let match = prompt.match(regex);
+
+    if (match) {
+        let type = match[1];
+        let topic = match[2];
+
+        let form = document.querySelector("[customID='compose-input']");
+        let typeElement = form.querySelector("[customInput='type']");
+        let topicElement = form.querySelector("[customInput='topic']");
+        
+        typeElement.value = type;
+        topicElement.value = topic;
+    }
+
+    //get score
+    let scoreContainer = module.querySelector(".detector-container");
+    let score = scoreContainer.querySelector(".text-200.detection-text").innerHTML;
+
+    if (parseFloat(score)) {
+        detectGPT(document.querySelector("[customID='compose-score']").parentElement, parsefloat(score));
+    } else {
+        //pass
+    }
+
+    //set edit attribute to true
+    module.setAttribute("edit", "true");
+    //show compose dropdown in case it is not already shown
+    document.querySelector(".compose-dropdown").style.display = "block";
+}
+
+function removeComposition(module) {
+    let text = module.querySelector("[customID='tasks-body']").innerHTML;
+    //remove task from DB
+    data = {
+        "member_id": member,
+        "completion": text
+    }
+    fetch("https://virtuallyme.onrender.com/remove_task", {
+        method: "POST",
+        body: JSON.stringify(data),
+        headers: {
+            "Content-Type": "application/json"
+        }
+    });
+    //remove module
+    module.remove();
+}
+
+
+
+function saveComposition() {
+    let form = document.querySelector("[customID='compose-input']");
+    let typeElement = form.querySelector("[customInput='type']");
+    let topicElement = form.querySelector("[customInput='topic']");   
+    
+    var jobIndex = form.querySelector("[customID='user-job-list']").selectedIndex-1;
+    if(jobIndex<0||jobIndex>userJobs.length){
+        var jobID = -1
+    } else {
+        var jobID = document.querySelectorAll("[customID='job-container']")[jobIndex].getAttribute("jobID");
+    }
+
+    let textElement = document.querySelector("[customID='compose-output']");
+
+    let prompt = `Let's write a(n) ${typeElement.value} about ${topicElement.value}`;
+    let completion = textElement.value;
+
+    //reset input elements
+    typeElement.value = "";
+    topicElement.value = "";
+    textElement.value = "";
+
+    //reset word count
+    document.querySelector("[customID='compose-word-count']").innerHTML = 0;
+
+    let recentCompositions = document.querySelector("[customID='recent-compositions']");
+    let modules = recentCompositions.querySelectorAll(".module");
+    for (let i=0; i<modules.length; i++) {
+        if (modules[i].getAttribute("edit")==="true") {
+            //remove composition
+            removeComposition(modules[i]);
+        }
+    }
+
+    //get current score
+    let scoreContainer = document.querySelector("[customID='compose-score']");
+    scoreContainer.parentElement.style.display = "none";
+    let score = scoreContainer.innerHTML;
+    //check if score has been calculated
+    if (parseFloat(score)) {
+        //store new composition
+        storeComposition(recentCompositions, {"prompt": prompt, "completion": completion, "score": parseFloat(score)});
+        
+    } else {
+        //store new composition
+        storeComposition(recentCompositions, {"prompt": prompt, "completion": completion});
+    }
+
+    //save composition in DB
+    let body = {
+        "member_id": member,
+        "category": "composition",
+        "prompt": prompt,
+        "completion": completion,
+        "score": parseFloat(score) || -1,
+        "job_id": jobID
+    }
+    fetch("https://virtuallyme.onrender.com/store_task", {
+        method: "POST",
+        body: JSON.stringify(body),
+        headers: {
+            "Content-Type": "application/json"
+        }
+    });
+}
+
 document.addEventListener("DOMContentLoaded", () => {
     pageLoad();
+    const WEB_SOCKET_URL = "wss://virtuallyme2-0.onrender.com/ws";
     socket = new WebSocket(WEB_SOCKET_URL);
 
     let tasks = ["task", "question", "rewrite", "idea"];
     document.querySelectorAll(".task-wrapper").forEach((wrapper, index) => {
         wrapper.querySelector(".generate-button").addEventListener("click", () => {
-            if (socket.readyState !== WebSocket.CLOSED) {
+            if(socket.readyState !== WebSocket.CLOSED){
                 if (tasks[index]==="task") {
                     submitTask(socket);
                 } else if (tasks[index]==="idea") {
@@ -1340,7 +1644,50 @@ document.addEventListener("DOMContentLoaded", () => {
                 });
             }
         })
-    })
+    });
+
+    const COMPOSE_SOCKET_URL = "wss://virtuallyme2-0.onrender.com/compose";
+    let composeSocket = new WebSocket(COMPOSE_SOCKET_URL);
+    
+    let requests = ["sentence", "paragraph", "rewrite"];
+    document.querySelectorAll(".compose-button").forEach((button, index) => {
+        button.addEventListener("click", () => {
+            if (composeSocket.readyState !== WebSocket.CLOSED) {
+                compose(composeSocket, requests[index]);
+            } else {
+                composeSocket = new WebSocket(COMPOSE_SOCKET_URL);
+                composeSocket.addEventListener("open", () => {
+                    compose(composeSocket, requests[index]);
+                })
+            }
+        });
+    });
+
+    document.querySelector("[customID='new-composition']").addEventListener("click", () => {
+        let form = document.querySelector("[customID='compose-input']");
+        let typeElement = form.querySelector("[customInput='type']");
+        let topicElement = form.querySelector("[customInput='topic']");
+        var empty = [];
+        if (typeElement.value==="") {
+            empty.push(typeElement);
+        } else if (topicElement.value==="") {
+            empty.push(topicElement);
+        } 
+        if (empty.length===0) {
+            document.querySelector(".compose-dropdown").style.display = "block";
+        } else {
+            var originalColor = empty[0].style.borderColor;
+            empty[0].style.borderColor = "#FFBEC2";
+            setTimeout(function() {
+                empty[0].style.borderColor = originalColor;
+            }, 1500);
+            return
+        }        
+    });
+
+    document.querySelector("[customID='compose-save-button']").addEventListener("click", () => {
+        saveComposition();
+    }); 
 });
 
 setInterval(() => {
@@ -1359,6 +1706,5 @@ setInterval(() => {
     })
 }, 60000)
 
-const WEB_SERVER_BASE_URL = "https://virtuallyme2-0.onrender.com"
-const WEB_SOCKET_URL = "wss://virtuallyme2-0.onrender.com/ws"
+const WEB_SERVER_BASE_URL = "https://virtuallyme2-0.onrender.com";
 let isWaiting = false;

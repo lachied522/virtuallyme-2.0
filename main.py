@@ -32,6 +32,7 @@ openai.api_key = OPENAI_API_KEY
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 GOOGLE_CSE_ID = os.getenv("GOOGLE_CSE_ID")
 
+##GPTZERO_API_KEY = "f54a4e6c855f4037aa63462aeacff06c"
 GPTZERO_API_KEY = os.getenv("GPTZERO_API_KEY")
 
 DB_BASE_URL = os.getenv("DB_BASE_URL")
@@ -51,7 +52,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-def turbo_openai_call(messages, max_tokens, temperature, presence_penalty):
+def turbo_openai_call(messages, max_tokens, temperature=0, presence_penalty=0):
     response = openai.ChatCompletion.create(
         model="gpt-3.5-turbo",
         messages=messages,
@@ -61,7 +62,6 @@ def turbo_openai_call(messages, max_tokens, temperature, presence_penalty):
     )
     return response["choices"][0]["message"]["content"].strip()
 
-  
 def rank_samples(search_string, samples):
     """
     rank samples by how frequently common words appear
@@ -85,7 +85,6 @@ async def get_logit_bias(samples):
 
     :param samples: list of completion, feedback dicts
     '''
-
     n_tokens = 0
     tokens_dict = {}
     for d in samples:
@@ -119,8 +118,6 @@ async def get_logit_bias(samples):
             #max bias is -7
             tokens_dict[key] = max(bias, -7)
 
-
-
     sorted_tokens = sorted(tokens_dict.items(), key=lambda x: x[1], reverse=True)
     #return 300 tokens with the highest bias
     return dict(sorted_tokens[:300])
@@ -139,7 +136,9 @@ async def get_data(member_id, job_id=-1):
         async with session.get(url) as response:
             data = await response.read()
 
-    return json.loads(data)["samples"], json.loads(data)["description"]
+    response_dict = json.loads(data)
+
+    return response_dict["name"], response_dict["description"], response_dict["about"], response_dict["samples"]
 
 
 async def construct_messages(user, job, maxlength, current_prompt):
@@ -151,17 +150,17 @@ async def construct_messages(user, job, maxlength, current_prompt):
     :current_prompt: current prompt to rank samples by
     """
 
-    samples, description = await get_data(user, job)
+    name, description, about, samples = await get_data(user, job)
+    #initiate logit task
     logit_task = asyncio.create_task(get_logit_bias(samples))
-    about = ""
 
     messages = []
     length = 0 #approximate length of prompt
-    role = "Forget how you think you should respond. You have adopted a new persona. I will ask you to write something. I expect you to respond how you imagine this person will respond, using their idiolect, structure, syntax, reasoning, and rationale."
-    if about != "":
-        role += f"\nHere is some information about your new persona: {about}"
-    if description != "":
-        role += f"\nHere is a description of your writing style:\n\n{description}"
+    role = f"You are my adaptive AI assistant called Virtually{name}. My name is {name}. I am a human. YOU MUST ASSUME MY PERSONALITY. I want you to THINK and RESPOND like me by using my idiolect, structure, syntax, reasoning, and rationale."
+    if about is not None:
+        role += f"\nHere is some information about me to help you assume my personality:\n'''{about}'''"
+    if description is not None:
+        role += f"\nHere is a description of my writing style. You must use this writing style in your responses:\n'''{description}'''"
 
     length += len(role.split())
 
@@ -173,11 +172,11 @@ async def construct_messages(user, job, maxlength, current_prompt):
         else:
             if len(messages) < 1:
                 messages.append({"role": "assistant", "content": prompt_completion["completion"]})
-                messages.append({"role": "user", "content": "Using the idiolect, structure, syntax, reasoning, and rationale of your new persona, "})
+                messages.append({"role": "user", "content": "Using my idiolect, structure, syntax, reasoning, and rationale, "})
             else:
                 #add some positive reinforcement
                 messages.append({"role": "assistant", "content": prompt_completion["completion"]})
-                messages.append({"role": "user", "content": "You're doing great. Continuing to use the idiolect, structure, syntax, reasoning, and rationale of your new persona, "})
+                messages.append({"role": "user", "content": "You're doing great. Continuing to use my idiolect, structure, syntax, reasoning, and rationale, "})
             length += len(prompt_completion["completion"].split())+20 #add a buffer corresponding to hidden tokens in the prompt
     
     messages.append({"role": "system", "content": role})
@@ -324,21 +323,15 @@ async def store_task(member_id, category, prompt, completion, score=None, source
             "job_id": job_id
         }
         async with session.post(url, json=data) as response:
-            return await response.text()
+            return await response.status()
 
-
+##websearch query
 class Query(BaseModel):
     query: str
 
-class Task(BaseModel):
-    category: str #task, idea, rewrite
-    what: str 
-    about: str
+##gpt detector query
+class Subject(BaseModel):
     text: str
-    additional: str
-    search: bool
-    member_id: str
-    job_id: str
 
 
 @app.get("/")
@@ -362,6 +355,12 @@ async def search_web(query: Query):
     query_dict = query.dict()
     result = await conduct_search(str(query_dict["query"]))
     return result
+
+@app.post("/detect")
+async def detect(subject: Subject):
+    document = subject.dict()
+    score = await predict_text(str(document["text"]))
+    return score
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
@@ -394,7 +393,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
                     if search_result["result"] != "":
                         context = search_result["result"]
-                        messages.append({"role": "system", "content": f"You may use following context to answer the next question. If the context is not relevant, you may disregard it. Make sure not to deviate from your new persona.\nContext: {context}"})
+                        messages.append({"role": "system", "content": f"You may use following context to answer the next question. If the context is not relevant, you may disregard it. Make sure not to deviate from your persona.\nContext: {context}"})
 
                 else:
                     search_result = {"result": "", "sources": []}
@@ -404,12 +403,11 @@ async def websocket_endpoint(websocket: WebSocket):
                     messages, logit_bias = await construct_messages(user, job, maxlength, topic)
 
                 if len([d for d in messages if d["role"]=="user"]) > 0:
-                    messages.append({"role": "user", "content": f"You're doing great. Continuing to use the idiolect, structure, syntax, reasoning, and rationale of your new persona, write a {category} about {topic}. Do not mention this prompt in your response. {additional}\n"})
-                    ##logit_bias = get_logit_bias([d["content"] for d in messages if d["role"]=="assistant"])
+                    messages.append({"role": "user", "content": f"You're doing great. Continuing to use my idiolect, structure, syntax, reasoning, and rationale, write a {category} about {topic}\n{additional}\nDo not mention this prompt in your response.\n"})
                 else:
                     #no user samples
                     messages = [d for d in messages if d["role"]!="system"]
-                    messages.append({"role": "user", "content": f"Using a high degree of variation in your structure, syntax, and semantics, write a {category} about {topic}. {additional}\n"})
+                    messages.append({"role": "user", "content": f"Using a high degree of variation in your structure, syntax, and semantics, write a {category} about {topic}\n{additional}\n"})
                     logit_bias = {}
             
                 max_tokens, temperature, presence_penalty = length_tokens, 1.1, 0.1
@@ -418,7 +416,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
             if data["category"]=="question":
                 user = data["member_id"]
-                job = int(data["job_id"])
+                job = -1
 
                 question = data["question"]
                 additional = data["additional"]
@@ -448,15 +446,14 @@ async def websocket_endpoint(websocket: WebSocket):
                     messages, logit_bias = await construct_messages(user, job, maxlength, question)
 
                 if len([d for d in messages if d["role"]=="user"]) > 0:
-                    messages.append({"role": "user", "content": f"Now I want you to answer the following question using the idiolect, structure, syntax, reasoning, and rationale of your new persona. Do not mention this prompt in your response. {additional}\nQuestion: {question}?\n"})
-                    #logit_bias = get_logit_bias([d["content"] for d in messages if d["role"]=="assistant"])
+                    messages.append({"role": "user", "content": f"You're doing great. Now I want you to answer the following question using my idiolect, structure, syntax, reasoning, and rationale. Do not mention this prompt in your response.\n{additional}\nQuestion: {question}?\n"})
                 else:
                     #no user samples
                     messages = [d for d in messages if d["role"]!="system"]
                     messages.append({"role": "user", "content": f"Answer the following question using a high degree of variation in your structure, syntax, and semantics.\nQuestion: {question}?\n"})
                     logit_bias = {}
             
-                max_tokens, temperature, presence_penalty = 1000, 1.2, 0
+                max_tokens, temperature, presence_penalty = 1000, 1.0, 0
                 prompt = f"{question}?" 
                 sources = search_result["sources"]
 
@@ -475,15 +472,14 @@ async def websocket_endpoint(websocket: WebSocket):
                 messages, logit_bias = await construct_messages(user, job, maxlength, text)
 
                 if len([d for d in messages if d["role"]=="user"]) > 0:
-                    messages.append({"role": "user", "content": f"Now I want you to rewrite the following text using the structure, syntax, word choices, reasoning, and rationale of your new persona. {additional} Text: {text}\n"})
-                    #logit_bias = get_logit_bias([d["content"] for d in messages if d["role"]=="assistant"])
+                    messages.append({"role": "user", "content": f"You're doing great. Now I want you to rewrite the following text using my idiolect, structure, syntax, reasoning, and rationale.\n{additional}\nText: {text}\n"})
                 else:
                     #no user samples
                     messages = [d for d in messages if d["role"]!="system"]
-                    messages.append({"role": "user", "content": f"Rewrite the following text using a high degree of variation in your structure, syntax, and semantics. {additional} Text: {text}\n"})
+                    messages.append({"role": "user", "content": f"Rewrite the following text using a high degree of variation in your structure, syntax, and semantics\n{additional}\nText: {text}\n"})
                     logit_bias = {}
 
-                max_tokens, temperature, presence_penalty = length_tokens, 1.2, 0 
+                max_tokens, temperature, presence_penalty = length_tokens, 1.0, 0 
                 #define prompt to be stored in DB
                 prompt = f"Rewrite: {text[:120]}..."
                 sources = []
@@ -496,7 +492,7 @@ async def websocket_endpoint(websocket: WebSocket):
             
                 messages = [{
                     "role": "user", 
-                    "content": f"Generate ideas for {category} about {topic}. Elaborate on each idea by providing specific examples of what content to include."
+                    "content": f"Generate ideas for {category} about {topic}. Elaborate on each idea by providing specific examples of what content to include.\n"
                 }]
 
                 logit_bias = {}
@@ -505,40 +501,170 @@ async def websocket_endpoint(websocket: WebSocket):
                 prompt = f"Generate content ideas for {category} about {topic}"
                 sources = []
                 job = None
-            
-            response = openai.ChatCompletion.create(
-                model="gpt-3.5-turbo",
-                messages=messages,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                presence_penalty=presence_penalty,
-                logit_bias=logit_bias,
-                stream=True
-            )
 
-            message_list = []
-            await websocket.send_json({"message": "[START MESSAGE]"})
-            for chunk in response:
-                delta = chunk['choices'][0]['delta']
-                message = str(delta.get('content', ''))
-                await websocket.send_json({"message": message})
-                message_list.append(message) #store messages to add to DB
+            attempts = 0
+            while attemps<3:
+                try:    
+                    response = openai.ChatCompletion.create(
+                        model="gpt-3.5-turbo",
+                        messages=messages,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                        presence_penalty=presence_penalty,
+                        logit_bias=logit_bias,
+                        stream=True
+                    )
 
-            completion = ''.join(message_list)
-            if data["category"]!="idea":
-                #do not score ideas
-                score = await predict_text(completion)
-            else:
-                score = None
+                    message_list = []
+                    await websocket.send_json({"message": "[START MESSAGE]"})
+                    for chunk in response:
+                        delta = chunk['choices'][0]['delta']
+                        message = str(delta.get('content', ''))
+                        await websocket.send_json({"message": message})
+                        message_list.append(message) #store messages to add to DB
+                                
+                    completion = ''.join(message_list)
+                    if data["category"]!="idea":
+                        #do not score ideas
+                        score = await predict_text(completion)
+                    else:
+                        score = None
 
-            if len(sources) > 0:
-                #send source data back as json
-                await websocket.send_json({"message": "[END MESSAGE]", "score": score, "sources": sources})
-            else:
-                await websocket.send_json({"message": "[END MESSAGE]", "score": score})
+                    if len(sources) > 0:
+                        #send source data back as json
+                        await websocket.send_json({"message": "[END MESSAGE]", "score": score, "sources": sources})
+                    else:
+                        await websocket.send_json({"message": "[END MESSAGE]", "score": score})
+
+                    break
+                except Exception as e:
+                    print(e)
+                    attemps+=1
     
             #store task in DB
             await store_task(user, data["category"], prompt, completion, score, sources, job)
+    except WebSocketDisconnect as e:
+        print(f"WebSocket connection closed with code {e.code}")
+        pass
+    except ConnectionClosedError as e:
+        print(f"Connection closed with error: {e}")
+        pass
+    except Exception as e:
+        print(e)
+        await websocket.close()
+        pass
+
+@app.websocket("/compose")
+async def websocket_endpoint(websocket: WebSocket):
+    """
+    :param request: sentence, paragraph, or rewrite
+    """
+    await websocket.accept()
+    try:
+        while True:
+            data = await websocket.receive_json()
+            
+            user = data["member_id"]
+            job = int(data["job_id"])
+
+            category = data["type"]
+            topic = data["topic"]
+
+            text = data["text"] 
+
+            length_tokens = 400
+            margin = 400
+            maxlength = 4097 - length_tokens - len(text.split())*4/3 - margin #prompt limit 4097 tokens
+
+            messages, logit_bias = await construct_messages(user, job, maxlength, topic)
+            
+            if data["request"]=="sentence":
+                if len([d for d in messages if d["role"]=="user"]) > 0:
+                    if len(text) > 0:
+                        messages += [
+                            {"role": "user", "content": f"You're doing great. Continuing to use my idiolect, structure, syntax, reasoning, and rationale, write a {category} about {topic}\n"},
+                            {"role": "assistant", "content": f"{text}"},
+                            {"role": "user", "content": "Write the next sentence. Do not give any other response, and remember to stay in character.\n"}
+                        ]
+                    else:
+                        ##user may ask to generate the next sentence when text is empty
+                        messages += [
+                            {"role": "user", "content": f"You're doing great. Continuing to use my idiolect, structure, syntax, reasoning, and rationale, write a {category} about {topic}\n"}
+                        ]
+                else:
+                    if len(text) > 0:
+                        messages = [
+                            {"role": "user", "content": f"Using a high degree of variation in your structure, syntax, and semantics, write a {category} about {topic}\n"},
+                            {"role": "assistant", "content": f"{text}"},
+                            {"role": "user", "content": "Write the next sentence. Do not give any other response.\n"}
+                        ]
+                    else:
+                        messages = [
+                            {"role": "user", "content": f"Using a high degree of variation in your structure, syntax, and semantics, write a {category} about {topic}\n"}
+                        ]
+                max_tokens, temperature, presence_penalty = 50, 1.1, 0
+
+            elif data["request"]=="paragraph":
+                if len([d for d in messages if d["role"]=="user"]) > 0:
+                    if len(text) > 0:
+                        messages += [
+                            {"role": "user", "content": f"You're doing great. Continuing to my idiolect, structure, syntax, reasoning, and rationale, write a {category} about {topic}\n"},
+                            {"role": "assistant", "content": f"{text}"},
+                            {"role": "user", "content": "Write the next paragraph. Do not give any other response, and remember to stay in character.\n"}
+                        ]
+                    else:
+                        messages += [
+                            {"role": "user", "content": f"You're doing great. Continuing to use my idiolect, structure, syntax, reasoning, and rationale, write a {category} about {topic}\n"}
+                        ]
+                else:
+                    if len(text) > 0:
+                        messages = [
+                            {"role": "user", "content": f"Using a high degree of variation in your structure, syntax, and semantics, write a {category} about {topic}\n"},
+                            {"role": "assistant", "content": f"{text}"},
+                            {"role": "user", "content": "Write the next paragraph. Do not give any other response.\n"}
+                        ]
+                    else:
+                        messages = [
+                            {"role": "user", "content": f"Using a high degree of variation in your structure, syntax, and semantics, write a {category} about {topic}\n"}
+                        ]
+                max_tokens, temperature, presence_penalty = 100, 1.1, 0
+            
+            elif data["request"]=="rewrite":
+                messages += [
+                    {"role": "user", "content": f"You're doing great. Continuing to use the idiolect, structure, syntax, reasoning, and rationale of your new persona, write a {category} about {topic}."},
+                    {"role": "assistant", "content": f"{text}"},
+                    {"role": "user", "content": "Complete the next sentence."}
+                ]
+                max_tokens, temperature, presence_penalty = length_tokens, 1.1, 0
+
+            n = 3 #number of options to generate
+
+            attempts = 0
+            while attempts < 3:
+                try:
+                    response = openai.ChatCompletion.create(
+                        model="gpt-3.5-turbo",
+                        messages=messages,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                        presence_penalty=presence_penalty,
+                        logit_bias = logit_bias,
+                        n = n,
+                        stream=True
+                    )
+
+                    await websocket.send_json({"message": "[START MESSAGE]"})
+                    for chunk in response:
+                        index = chunk["choices"][0].index
+                        delta = chunk["choices"][0].delta
+                        message = str(delta.get('content', ''))
+                        await websocket.send_json({"index": index, "message": message})
+
+                    await websocket.send_json({"message": "[END MESSAGE]"})
+                    break
+                except Exception as e:
+                    attempts += 1
+
     except WebSocketDisconnect as e:
         print(f"WebSocket connection closed with code {e.code}")
         pass
