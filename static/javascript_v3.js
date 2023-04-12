@@ -1508,6 +1508,9 @@ function editComposition(module) {
         typeElement.value = type;
         topicElement.value = topic;
     }
+    //update current word count
+    let words = text.split(" ").length;
+    document.querySelector("[customID='compose-word-count']").innerHTML = words;
 
     //get score
     let scoreContainer = module.querySelector(".detector-container");

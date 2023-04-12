@@ -503,7 +503,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 job = None
 
             attempts = 0
-            while attemps<3:
+            while attempts<3:
                 try:    
                     response = openai.ChatCompletion.create(
                         model="gpt-3.5-turbo",
@@ -539,7 +539,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     break
                 except Exception as e:
                     print(e)
-                    attemps+=1
+                    attempts+=1
     
             #store task in DB
             await store_task(user, data["category"], prompt, completion, score, sources, job)
