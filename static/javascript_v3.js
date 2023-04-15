@@ -173,7 +173,7 @@ function showAlertBanner(msg) {
 function updateUserWords(value){
     userWordCount = value;
     document.querySelectorAll("[customID='user-word-count']").forEach(element => {
-        element.innerHTML = `Words this month: ${userWordCount}`;
+        element.innerHTML = userWordCount.toLocaleString();
     })
 }
 
@@ -193,10 +193,20 @@ function detectGPT(container, score){
     }
 }
 
-function updateJobWords(jobElement, value){
-    let wordCountElement = jobElement.querySelector("[customID='job-word-count']");
 
-    wordCountElement.innerHTML = String(Math.max(value, 0));
+function updateJobWords(jobElement){
+    let allSamples = jobElement.querySelectorAll("[customID='sample-text']");
+
+    let totalWords = 0;
+    allSamples.forEach(sample => {
+        let text = sample.value;
+        if (text!=="") {
+            let words = text.trim().split(/\s+/).length;
+            totalWords += words;
+        }
+    });
+
+    jobElement.querySelector("[customID='job-word-count']").innerHTML = totalWords.toLocaleString();
     
     //progress bar logic
     let progressBar = jobElement.querySelector(".progress-bar-inner");
@@ -204,22 +214,22 @@ function updateJobWords(jobElement, value){
     if (progressBar.classList.length>1) {
         progressBar.classList.remove(progressBar.classList[progressBar.classList.length-1]);
     }
-    if (value<=0) {
+    if (totalWords<=0) {
         jobElement.querySelector("[customID='samples-empty-text']").style.display = "block";
     }
-    if (value<=1000) {
+    if (totalWords<=1000) {
         progressBar.classList.add("stage-0");
         progressText.innerHTML = "";
         jobElement.querySelector("[customID='samples-empty-text']").style.display = "none";
-    } else if (value<=3000) {
+    } else if (totalWords<=3000) {
         progressBar.classList.add("stage-1");
         progressText.innerHTML = "Not bad";
         jobElement.querySelector("[customID='samples-empty-text']").style.display = "none";
-    } else if (value<=6500) {
+    } else if (totalWords<=6500) {
         progressBar.classList.add("stage-2");
         progressText.innerHTML = "Good";
         jobElement.querySelector("[customID='samples-empty-text']").style.display = "none";
-    } else if (value<=1000) {
+    } else if (totalWords<=1000) {
         progressBar.classList.add("stage-3");
         progressText.innerHTML = "Great!";
         jobElement.querySelector("[customID='samples-empty-text']").style.display = "none";
@@ -248,7 +258,7 @@ function newJob(jobName){
     jobTabButtons[index].innerHTML = jobName;
     //set text area resize to none prior to cloning
     jobElement.querySelector("[customID='sample-text']").style.resize = "none";
-    updateJobWords(jobElement, 0);
+    updateJobWords(jobElement);
     return jobElement
 }
 
@@ -354,14 +364,12 @@ function storeComposition(tasksContainer, data) {
     taskClone.querySelector("[customID='tasks-header']").innerHTML = data.prompt;
     taskClone.querySelector("[customID='tasks-body']").innerHTML = data.completion;
 
-    let score = -1;
-
     if (data.hasOwnProperty('score')) {
-        if (data.score!==null && data.score>-1) {
+        if (data.score!==null) {
             score = data.score;
-
-            taskClone.querySelector(".detector-container");
             detectGPT(taskClone.querySelector(".detector-container"), data.score);
+        } else {
+            detectGPT(taskClone.querySelector(".detector-container"), -1);
         }
     }
 
@@ -503,7 +511,7 @@ function getUser(counter = 0){
                 for(let j=0; j < data.user[i].data.length; j++){
                     samplesGrid.appendChild(newSample(newJobElement, sampleWrapper, data.user[i].data[j].completion));
                 }
-                updateJobWords(newJobElement, data.user[i].word_count);
+                updateJobWords(newJobElement);
                 newJobElement.setAttribute("saved", "true");
             }
             if (data.user.length>0||data.words>0) {
@@ -609,7 +617,7 @@ function createJob(counter = 0) {
         .then(response => response.json())
         .then(data => {       
             var newJobElement = newJob(newJobName);
-            updateJobWords(newJobElement, 0);
+            updateJobWords(newJobElement);
             newJobElement.setAttribute("jobID", data.job_id);
             popupClose(popupWrapper);
             form.reset();
@@ -653,7 +661,7 @@ function addSample(jobElement) {
             //reset text elements (don't use form.reset())
             textElement.value = "";
             //increase job word count
-            updateJobWords(jobElement, currentWords+newWords);
+            updateJobWords(jobElement);
             jobElement.setAttribute("saved", "false");
             jobElement.querySelector("[customID='save-button']").style.display = "flex";
             jobElement.querySelector("[customID='saving-button']").style.display = "none";
@@ -700,8 +708,6 @@ function uploadFiles(jobElement, files) {
         let samplesGrid = jobElement.querySelector(".samples-grid");
         let sampleWrapper = samplesGrid.querySelectorAll(".sample-wrapper")[0];
         var wordCountElement = jobElement.querySelector("[customID='job-word-count']");
-        var currentWords = parseInt(wordCountElement.innerHTML);
-        var newWords = 0;
         for(let i=0; i<data.texts.length; i++){
             if (data.texts[i].includes("Unsupported filetype")) {
                 showAlertBanner(data.texts[i]);
@@ -709,10 +715,9 @@ function uploadFiles(jobElement, files) {
                 showAlertBanner(data.texts[i]);
             } else {
                 samplesGrid.appendChild(newSample(jobElement, sampleWrapper, data.texts[i]));
-                newWords += data.texts[i].length;
             }
         }
-        updateJobWords(jobElement, currentWords+newWords);
+        updateJobWords(jobElement);
         jobElement.querySelector(".loading-container").style.display = "none";
         jobElement.setAttribute("saved", "false");
         jobElement.querySelector("[customID='save-button']").style.display = "flex";
@@ -725,16 +730,13 @@ function uploadFiles(jobElement, files) {
 }
 
 function removeSample(jobElement, sampleWrapper){
-    let sampleWords = sampleWrapper.querySelector("[customID='sample-text']").value.split(" ").length;
     sampleWrapper.remove();
-    //adjust word count
-    let wordCountElement = jobElement.querySelector("[customID='job-word-count']");
-    let currentWords = parseInt(wordCountElement.innerHTML);
-    updateJobWords(jobElement, currentWords-sampleWords);
     //show save button
     jobElement.querySelector("[customID='save-button']").style.display = "flex";
     jobElement.querySelector("[customID='saving-button']").style.display = "none";
     jobElement.querySelector("[customID='saved-button']").style.display = "none";
+    //adjust word count
+    updateJobWords(jobElement);
 }
 
 function removeJob(jobElement){
@@ -1371,7 +1373,6 @@ function appendText(text) {
         let data = {
             "text": String(output)
         }
-        console.log(data);
         fetch(url, {
             method: "POST",
             body: JSON.stringify(data),
@@ -1443,8 +1444,11 @@ function compose(socket, request) {
         //reset options elements
         let optionsOutput = document.querySelector(".suggestions-container");
         let optionsContainers = optionsOutput.querySelectorAll(".option");
-        optionsContainers.forEach((element, index) => {
-            element.innerHTML = "Please wait. . .";
+        optionsContainers.forEach((option, index) => {
+            option.innerHTML = "Please wait. . .";
+            if (!option.closest(".module").classList.contains("no-hover")) {
+                option.closest(".module").classList.add("no-hover");
+            } 
         })
         //display options container
         optionsOutput.style.display = "flex";
@@ -1452,8 +1456,8 @@ function compose(socket, request) {
             let response = JSON.parse(event.data);
             let data = response.message;
             if (data==="[START MESSAGE]") {
-                optionsContainers.forEach(element => {
-                    element.innerHTML = "";
+                optionsContainers.forEach(option => {
+                    option.innerHTML = "";
                 });
             } else if (data!=="[END MESSAGE]") {
                 let index = response.index;
@@ -1461,9 +1465,10 @@ function compose(socket, request) {
             } else {
                 isWaiting = false;
                 this.removeEventListener("message", receive);
-                optionsContainers.forEach((element, index) => {
-                    element.parentElement.addEventListener("click", () => {
-                        text = element.innerHTML;
+                optionsContainers.forEach((option, index) => {
+                    option.closest(".module").classList.remove("no-hover");
+                    option.parentElement.addEventListener("click", () => {
+                        text = option.innerHTML;
                         appendText(text);
                     })
                 });
@@ -1508,8 +1513,8 @@ function editComposition(module) {
         typeElement.value = type;
         topicElement.value = topic;
     }
-    //update current word count
-    let words = text.split(" ").length;
+    //update word count
+    let words = text.trim().split(/\s+/).length;
     document.querySelector("[customID='compose-word-count']").innerHTML = words;
 
     //get score
@@ -1593,7 +1598,7 @@ function saveComposition() {
         
     } else {
         //store new composition
-        storeComposition(recentCompositions, {"prompt": prompt, "completion": completion});
+        storeComposition(recentCompositions, {"prompt": prompt, "completion": completion, "score": -1});
     }
 
     //save composition in DB
@@ -1664,6 +1669,13 @@ document.addEventListener("DOMContentLoaded", () => {
                 })
             }
         });
+    });
+
+    //dynamic word counter for compose task
+    document.querySelector("[customID='compose-output']").addEventListener("input", () => {
+        let text = document.querySelector("[customID='compose-output']").value;
+        let words = text.trim().split(/\s+/).length;
+        document.querySelector("[customID='compose-word-count']").innerHTML = words;
     });
 
     document.querySelector("[customID='new-composition']").addEventListener("click", () => {
