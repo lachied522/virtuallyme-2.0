@@ -313,7 +313,7 @@ function storeTask(tasksContainer, data){
         })
     }
     if (data.hasOwnProperty('score')) {
-        if (data.score!==null && data.score>-1) {
+        if (data.score!==null) {
             taskClone.querySelector(".detector-container");
             detectGPT(taskClone.querySelector(".detector-container"), data.score);
         }

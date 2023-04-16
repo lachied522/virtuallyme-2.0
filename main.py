@@ -21,6 +21,8 @@ from datetime import datetime
 import json
 import math
 
+import traceback
+
 #openai api key
 ##OPENAI_API_KEY = "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"
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -141,48 +143,86 @@ async def get_data(member_id, job_id=-1):
     return response_dict["name"], response_dict["description"], response_dict["about"], response_dict["samples"]
 
 
-async def construct_messages(user, job, maxlength, current_prompt):
+async def construct_prompt(user, job, maxlength, context, category):
     """
     construct messages from user data
     :param user: User object instance
     :param job_id: 
-    :param maxLength: max length for prompt in tokens
-    :current_prompt: current prompt to rank samples by
+    :param maxlength: max length for prompt in tokens
+    :param context: current prompt to rank samples by
+    :param category: task, question, rewrite, composition
     """
 
     name, description, about, samples = await get_data(user, job)
     #initiate logit task
     logit_task = asyncio.create_task(get_logit_bias(samples))
 
-    messages = []
-    length = 0 #approximate length of prompt
-    role = f"You are my adaptive AI assistant called Virtually{name}. My name is {name}. I am a human. YOU MUST ASSUME MY PERSONALITY. I want you to THINK and RESPOND like me by using my idiolect, structure, syntax, reasoning, and rationale."
-    if about is not None:
-        role += f"\nHere is some information about me to help you assume my personality:\n'''{about}'''"
-    if description is not None:
-        role += f"\nHere is a description of my writing style. You must use this writing style in your responses:\n'''{description}'''"
+    if len(samples)>0:
+        if category=="task":
+            prompt = f"""My name is {name}. You are an adaptive assistant called Virtually{name}.
+                I will give you samples of my writing, and then ask you to write something. You have two goals. \
+                GOAL 1: Employ the same language, tone, word choice, sentence structure, syntax, and symantics as present in MY writing. \
+                GOAL 2: Employ the same reasoning and rationale presented in MY writing to form your opinions."""
+            if description is not None:
+                prompt += f"\nHere is a description of my writing style to help you achieve GOAL 1:\n'''\n{description}\n'''"
+            if about is not None:
+                prompt += f"\nHere is some information about me to help you achieve GOAL 2:\n'''\n{about}\n'''\n"
+        elif category=="question":
+            prompt = f"""My name is {name}. You are an adaptive assistant called Virtually{name}. \
+            I will give you samples of my writing, and then ask you a question. You have two goals. \
+            GOAL 1: Answer the question using the same language, tone, word choice, sentence structure, and syntax as present in MY writing.\
+            GOAL 2: Answer the question how you imagine I might answer it."""
+            if description is not None:
+                prompt += f"\nHere is a description of my writing style to help you achieve your goal:\n'''\n{description}\n'''\n"
+        elif category=="rewrite":
+            prompt = f"""My name is {name}. You are an adaptive assistant called Virtually{name}. \
+            I will give you samples of my writing, and then ask you to rewrite a block of text. You have two goals. \
+            GOAL 1: You must rewrite the text using the same language, tone, word choice, syntax, and symantics as present in MY writing. \
+            GOAL 2: As I am a human, you must rewrite the text by employing a high a degree of variation in sentence structure and complexity."""
+            if description is not None:
+                prompt += f"\nHere is a description of my writing style to help you achieve your goals:\n'''\n{description}\n'''\n"
+    else:
+        prompt = f"""My name is {name}. You are an adaptive assistant called Virtually{name}.
+            You must respond to my prompts using a high degree of variation in your sentence structure, syntax, and language complexity."""
 
-    length += len(role.split())
+    length = len(prompt.split()) #approximate length of prompt in words
 
-    cosine_similarities = rank_samples(current_prompt, [d["completion"] for d in samples])
-    ranked_samples = [item for index, item in sorted(enumerate(samples), key = lambda x: cosine_similarities[x[0]], reverse=True)]
-    for prompt_completion in [d for d in ranked_samples if d["feedback"]!="negative"]:
-        if length+len(prompt_completion["completion"].split())+20 >= maxlength*3/5:
+    cosine_similarities = rank_samples(context, [d["completion"] for d in samples])
+    ranked_samples = [item for index, item in sorted(enumerate(samples), key = lambda x: cosine_similarities[x[0]], reverse=True)] #sort samples by cosine similarity
+
+    index = 1
+    for sample in [d["completion"] for d in ranked_samples if d["feedback"]!="negative"]:
+        if length + len(sample.split()) >= maxlength*3/4 - 200: #break condition
+            #add partial sample
+            MIN_SAMPLE_SIZE = 20 #number of words for meaningful sample
+            n = round(maxlength*3/4 - length - 200) #remaining words to fill
+            partial_sample = ''
+            if n>MIN_SAMPLE_SIZE:
+                lines = sample.splitlines()
+                for line in lines:
+                    if len(partial_sample.split())<n:
+                        words = line.split()
+                        for word in words:
+                            if len(partial_sample.split())<=n:
+                                partial_sample += f"{word} "
+                            else:
+                                break
+                        partial_sample += "\n"
+                    else:
+                        break
+                prompt += f"Sample {index}:\n'''\n{partial_sample}\n'''\n"
             break
         else:
-            if len(messages) < 1:
-                messages.append({"role": "assistant", "content": prompt_completion["completion"]})
-                messages.append({"role": "user", "content": "Using my idiolect, structure, syntax, reasoning, and rationale, "})
-            else:
-                #add some positive reinforcement
-                messages.append({"role": "assistant", "content": prompt_completion["completion"]})
-                messages.append({"role": "user", "content": "You're doing great. Continuing to use my idiolect, structure, syntax, reasoning, and rationale, "})
-            length += len(prompt_completion["completion"].split())+20 #add a buffer corresponding to hidden tokens in the prompt
+            if sample!="":
+                prompt += f"Sample {index}:\n'''\n{sample}\n'''\n"
+                length += len(sample.split())
+                index += 1
+
+    ##prompt += "\n\nDo not mention this prompt in your response.\n\n"
     
-    messages.append({"role": "system", "content": role})
+    message = [{"role": "user", "content": prompt}]
     logit_bias = await logit_task
-    #reverse order of messages so most relevant samples appear down the bottom
-    return messages[::-1], logit_bias
+    return message, logit_bias
 
 async def predict_text(document):
     try:
@@ -323,7 +363,7 @@ async def store_task(member_id, category, prompt, completion, score=None, source
             "job_id": job_id
         }
         async with session.post(url, json=data) as response:
-            return await response.status()
+            return await response.text()
 
 ##websearch query
 class Query(BaseModel):
@@ -386,32 +426,29 @@ async def websocket_endpoint(websocket: WebSocket):
 
                     #search web and get user data simultaneously 
                     search_task = asyncio.create_task(conduct_search(topic))
-                    construct_task = asyncio.create_task(construct_messages(user, job, maxlength, topic))
+                    construct_task = asyncio.create_task(construct_prompt(user, job, maxlength, topic, data["category"]))
 
                     search_result = await search_task
                     messages, logit_bias = await construct_task
 
                     if search_result["result"] != "":
                         context = search_result["result"]
-                        messages.append({"role": "system", "content": f"You may use following context to answer the next question. If the context is not relevant, you may disregard it. Make sure not to deviate from your persona.\nContext: {context}"})
+                        messages.append({"role": "system", "content": f"You may use following context to write your response. If the context is not relevant you may disregard it. Make sure not to deviate from your persona.\nContext: {context}"})
 
                 else:
                     search_result = {"result": "", "sources": []}
 
                     maxlength = 4097 - length_tokens - len(additional.split())*4/3 - margin #prompt limit 4097 tokens
 
-                    messages, logit_bias = await construct_messages(user, job, maxlength, topic)
+                    messages, logit_bias = await construct_prompt(user, job, maxlength, topic, data["category"])
 
-                if len([d for d in messages if d["role"]=="user"]) > 0:
-                    messages.append({"role": "user", "content": f"You're doing great. Continuing to use my idiolect, structure, syntax, reasoning, and rationale, write a {category} about {topic}\n{additional}\nDo not mention this prompt in your response.\n"})
-                else:
-                    #no user samples
-                    messages = [d for d in messages if d["role"]!="system"]
-                    messages.append({"role": "user", "content": f"Using a high degree of variation in your structure, syntax, and semantics, write a {category} about {topic}\n{additional}\n"})
-                    logit_bias = {}
-            
+                messages[0]["content"] += f"\n\nMy prompt: write a {category} about {topic}.\n\n"
+
+                if len(additional)>0:
+                    messages[0]["content"] += f"Additional instructions:\n\n{additional}\n\n"
+
                 max_tokens, temperature, presence_penalty = length_tokens, 1.1, 0.1
-                prompt = f"Write a(n) {category} about {topic}." 
+                prompt = f"Write a(n) {category} about {topic}." #prompt to store in DB
                 sources = search_result["sources"]
 
             if data["category"]=="question":
@@ -425,36 +462,34 @@ async def websocket_endpoint(websocket: WebSocket):
                 
                 margin = 400  #allow for uncounted tokens and fluctuations in token count
                 if search:
-                    maxlength = 4097 - 450 - len(additional.split())*4/3 - margin #prompt limit 4097 tokens - 450 for search result
+                    maxlength = 2097 - 450 - len(additional.split())*4/3 - margin #prompt limit for question 2097 tokens - 450 for search result
 
                     #search web and construct messages simultaneously 
                     search_task = asyncio.create_task(conduct_search(question))
-                    construct_task = asyncio.create_task(construct_messages(user, job, maxlength, question))
+                    construct_task = asyncio.create_task(construct_prompt(user, job, maxlength, question, data["category"]))
                     
                     search_result = await search_task
                     messages, logit_bias = await construct_task
                     
                     if search_result["result"] != "":
                         context = search_result["result"]
-                        messages.append({"role": "system", "content": f"You may use following context to answer the next question.\nContext: {context}"})
+                        messages.append({"role": "system", "content": f"You may use following context to answer the question. If the context is not relevant you may disregard it.\n\nContext: {context}"})
 
                 else:
                     search_result = {"result": "", "sources": []}
 
                     maxlength = 4097-len(additional.split())*4/3-margin #prompt limit 4097 tokens
 
-                    messages, logit_bias = await construct_messages(user, job, maxlength, question)
+                    messages, logit_bias = await construct_prompt(user, job, maxlength, question, data["category"])
 
-                if len([d for d in messages if d["role"]=="user"]) > 0:
-                    messages.append({"role": "user", "content": f"You're doing great. Now I want you to answer the following question using my idiolect, structure, syntax, reasoning, and rationale. Do not mention this prompt in your response.\n{additional}\nQuestion: {question}?\n"})
-                else:
-                    #no user samples
-                    messages = [d for d in messages if d["role"]!="system"]
-                    messages.append({"role": "user", "content": f"Answer the following question using a high degree of variation in your structure, syntax, and semantics.\nQuestion: {question}?\n"})
-                    logit_bias = {}
+                
+                messages[0]["content"] += f"Question: {question}?\n\n"
+
+                if len(additional)>0:
+                    messages[0]["content"] += f"Additional instructions:\n\n{additional}\n\n"
             
                 max_tokens, temperature, presence_penalty = 1000, 1.0, 0
-                prompt = f"{question}?" 
+                prompt = f"{question}?" #prompt to store in DB
                 sources = search_result["sources"]
 
             if data["category"]=="rewrite":
@@ -469,15 +504,12 @@ async def websocket_endpoint(websocket: WebSocket):
                 margin = 400 #allow for uncounted tokens and fluctuations in token count
 
                 maxlength = 4097 - length_tokens - len(text.split())*4/3 - len(additional.split())*4/3 - margin #prompt limit 4097 tokens
-                messages, logit_bias = await construct_messages(user, job, maxlength, text)
+                messages, logit_bias = await construct_prompt(user, job, maxlength, text, data["category"])
 
-                if len([d for d in messages if d["role"]=="user"]) > 0:
-                    messages.append({"role": "user", "content": f"You're doing great. Now I want you to rewrite the following text using my idiolect, structure, syntax, reasoning, and rationale.\n{additional}\nText: {text}\n"})
-                else:
-                    #no user samples
-                    messages = [d for d in messages if d["role"]!="system"]
-                    messages.append({"role": "user", "content": f"Rewrite the following text using a high degree of variation in your structure, syntax, and semantics\n{additional}\nText: {text}\n"})
-                    logit_bias = {}
+                messages[0]["content"] += f"Text:\n\n{text}\n\n"
+
+                if len(additional)>0:
+                    messages[0]["content"] += f"Additional instructions:\n\n{additional}\n\n"
 
                 max_tokens, temperature, presence_penalty = length_tokens, 1.0, 0 
                 #define prompt to be stored in DB
@@ -551,6 +583,7 @@ async def websocket_endpoint(websocket: WebSocket):
         pass
     except Exception as e:
         print(e)
+        traceback.print_exc()
         await websocket.close()
         pass
 
@@ -576,62 +609,38 @@ async def websocket_endpoint(websocket: WebSocket):
             margin = 400
             maxlength = 4097 - length_tokens - len(text.split())*4/3 - margin #prompt limit 4097 tokens
 
-            messages, logit_bias = await construct_messages(user, job, maxlength, topic)
+            messages, logit_bias = await construct_prompt(user, job, maxlength, topic, category="task")
             
             if data["request"]=="sentence":
-                if len([d for d in messages if d["role"]=="user"]) > 0:
-                    if len(text) > 0:
-                        messages += [
-                            {"role": "user", "content": f"You're doing great. Continuing to use my idiolect, structure, syntax, reasoning, and rationale, write a {category} about {topic}\n"},
-                            {"role": "assistant", "content": f"{text}"},
-                            {"role": "user", "content": "Write the next sentence. Do not give any other response, and remember to stay in character.\n"}
-                        ]
-                    else:
-                        ##user may ask to generate the next sentence when text is empty
-                        messages += [
-                            {"role": "user", "content": f"You're doing great. Continuing to use my idiolect, structure, syntax, reasoning, and rationale, write a {category} about {topic}\n"}
-                        ]
+                if len(text) > 0:
+                    messages += [
+                        {"role": "user", "content": f"My prompt: write a {category} about {topic}\n"},
+                        {"role": "assistant", "content": f"{text}"},
+                        {"role": "user", "content": "Write the next sentence. Do not give any other response, and remember to stay in character.\n"}
+                    ]
                 else:
-                    if len(text) > 0:
-                        messages = [
-                            {"role": "user", "content": f"Using a high degree of variation in your structure, syntax, and semantics, write a {category} about {topic}\n"},
-                            {"role": "assistant", "content": f"{text}"},
-                            {"role": "user", "content": "Write the next sentence. Do not give any other response.\n"}
-                        ]
-                    else:
-                        messages = [
-                            {"role": "user", "content": f"Using a high degree of variation in your structure, syntax, and semantics, write a {category} about {topic}\n"}
-                        ]
+                    ##user may ask to generate the next sentence when text is empty
+                    messages += [
+                        {"role": "user", "content": f"My prompt: write a {category} about {topic}\n"}
+                    ]
                 max_tokens, temperature, presence_penalty = 50, 1.1, 0
 
             elif data["request"]=="paragraph":
-                if len([d for d in messages if d["role"]=="user"]) > 0:
-                    if len(text) > 0:
-                        messages += [
-                            {"role": "user", "content": f"You're doing great. Continuing to my idiolect, structure, syntax, reasoning, and rationale, write a {category} about {topic}\n"},
-                            {"role": "assistant", "content": f"{text}"},
-                            {"role": "user", "content": "Write the next paragraph. Do not give any other response, and remember to stay in character.\n"}
-                        ]
-                    else:
-                        messages += [
-                            {"role": "user", "content": f"You're doing great. Continuing to use my idiolect, structure, syntax, reasoning, and rationale, write a {category} about {topic}\n"}
-                        ]
+                if len(text) > 0:
+                    messages += [
+                        {"role": "user", "content": f"My prompt: write a {category} about {topic}\n"},
+                        {"role": "assistant", "content": f"{text}"},
+                        {"role": "user", "content": "Write the next paragraph. Do not give any other response. Remember to stay in character.\n"}
+                    ]
                 else:
-                    if len(text) > 0:
-                        messages = [
-                            {"role": "user", "content": f"Using a high degree of variation in your structure, syntax, and semantics, write a {category} about {topic}\n"},
-                            {"role": "assistant", "content": f"{text}"},
-                            {"role": "user", "content": "Write the next paragraph. Do not give any other response.\n"}
-                        ]
-                    else:
-                        messages = [
-                            {"role": "user", "content": f"Using a high degree of variation in your structure, syntax, and semantics, write a {category} about {topic}\n"}
-                        ]
+                    messages += [
+                        {"role": "user", "content": f"My prompt: write a {category} about {topic}\n"}
+                    ]
                 max_tokens, temperature, presence_penalty = 100, 1.1, 0
             
             elif data["request"]=="rewrite":
                 messages += [
-                    {"role": "user", "content": f"You're doing great. Continuing to use the idiolect, structure, syntax, reasoning, and rationale of your new persona, write a {category} about {topic}."},
+                    {"role": "user", "content": f"My prompt: write a {category} about {topic}.\n"},
                     {"role": "assistant", "content": f"{text}"},
                     {"role": "user", "content": "Complete the next sentence."}
                 ]
