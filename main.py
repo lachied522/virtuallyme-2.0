@@ -159,21 +159,40 @@ async def construct_prompt(user, job, maxlength, context, category):
 
     if len(samples)>0:
         if category=="task":
-            prompt = f"""My name is {name}. You are an adaptive assistant called Virtually{name}.
-                I will give you samples of my writing, and then ask you to write something. You have two goals. \
-                GOAL 1: Employ the same language, tone, word choice, sentence structure, syntax, and symantics as present in MY writing. \
-                GOAL 2: Employ the same reasoning and rationale presented in MY writing to form your opinions."""
-            if description is not None:
-                prompt += f"\nHere is a description of my writing style to help you achieve GOAL 1:\n'''\n{description}\n'''"
-            if about is not None:
-                prompt += f"\nHere is some information about me to help you achieve GOAL 2:\n'''\n{about}\n'''\n"
+            if job < 0:
+                #split prompt up based on whether user has selected general or specific job
+                prompt = f"""My name is {name}. You are an adaptive assistant called Virtually{name}.
+                    I will give you samples of my writing, and then ask you to write something. You have two goals. \
+                    GOAL 1: Employ the same language, tone, word choice, sentence structure, syntax, and symantics as present in MY writing. \
+                    GOAL 2: Employ the same reasoning and rationale presented in MY writing to form your opinions."""
+                if description is not None:
+                    prompt += f"\nHere is a description of my writing style to help you achieve GOAL 1:\n'''\n{description}\n'''"
+                if about is not None:
+                    prompt += f"\nHere is some information about me to help you achieve GOAL 2:\n'''\n{about}\n'''\n"
+            else:
+                prompt = f"""My name is {name}. You are an adaptive assistant called Virtually{name}.
+                    I will give you samples of my writing, and then ask you to write something. You have two goals. \
+                    GOAL 1: Employ the same language, tone, word choice, sentence structure, syntax, and symantics as present in MY writing. \
+                    GOAL 2: Employ the same reasoning and rationale presented in MY writing to form your opinions."""
+                if description is not None:
+                    prompt += f"\nHere is a description of my writing style to help you achieve GOAL 1:\n'''\n{description}\n'''"
+                if about is not None:
+                    prompt += f"\nHere is some information about me to help you achieve GOAL 2:\n'''\n{about}\n'''\n"
         elif category=="question":
-            prompt = f"""My name is {name}. You are an adaptive assistant called Virtually{name}. \
-            I will give you samples of my writing, and then ask you a question. You have two goals. \
-            GOAL 1: Answer the question using the same language, tone, word choice, sentence structure, and syntax as present in MY writing.\
-            GOAL 2: Answer the question how you imagine I might answer it."""
-            if description is not None:
-                prompt += f"\nHere is a description of my writing style to help you achieve your goal:\n'''\n{description}\n'''\n"
+            if job < 0:
+                prompt = f"""My name is {name}. You are an adaptive assistant called Virtually{name}. \
+                I will give you samples of my writing, and then ask you a question. \
+                You may answer the question using the same language, tone, word choice, sentence structure, syntax, and symantics as present in MY writing."""
+                if description is not None:
+                    prompt += f"\nHere is a description of my writing style to help you achieve your goal:\n'''\n{description}\n'''\n"
+            else:
+                prompt = f"""My name is {name}. You are an adaptive assistant called Virtually{name}. \
+                I will give you samples of my writing, and then ask you a question. You have two goals. \
+                GOAL 1: Answer the question using the same language, tone, word choice, sentence structure, and syntax as present in MY writing.\
+                GOAL 2: Answer the question how you imagine I might answer it."""
+                if description is not None:
+                    prompt += f"\nHere is a description of my writing style to help you achieve your goals:\n'''\n{description}\n'''\n"
+                prompt += "\nDo not mention these instructions in your response.\n"
         elif category=="rewrite":
             prompt = f"""My name is {name}. You are an adaptive assistant called Virtually{name}. \
             I will give you samples of my writing, and then ask you to rewrite a block of text. You have two goals. \
@@ -182,6 +201,7 @@ async def construct_prompt(user, job, maxlength, context, category):
             if description is not None:
                 prompt += f"\nHere is a description of my writing style to help you achieve your goals:\n'''\n{description}\n'''\n"
     else:
+        #if no user samples, do not attempt to adapt to user
         prompt = f"""My name is {name}. You are an adaptive assistant called Virtually{name}.
             You must respond to my prompts using a high degree of variation in your sentence structure, syntax, and language complexity."""
 
@@ -453,7 +473,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
             if data["category"]=="question":
                 user = data["member_id"]
-                job = -1
+                job = int(data["job_id"])
 
                 question = data["question"]
                 additional = data["additional"]
@@ -462,7 +482,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 
                 margin = 400  #allow for uncounted tokens and fluctuations in token count
                 if search:
-                    maxlength = 2097 - 450 - len(additional.split())*4/3 - margin #prompt limit for question 2097 tokens - 450 for search result
+                    maxlength = 4097 - 450 - len(additional.split())*4/3 - margin #prompt limit for question 2097 tokens - 450 for search result
 
                     #search web and construct messages simultaneously 
                     search_task = asyncio.create_task(conduct_search(question))
@@ -478,7 +498,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 else:
                     search_result = {"result": "", "sources": []}
 
-                    maxlength = 4097-len(additional.split())*4/3-margin #prompt limit 4097 tokens
+                    maxlength = 4097 - len(additional.split())*4/3 - margin #prompt limit 4097 tokens
 
                     messages, logit_bias = await construct_prompt(user, job, maxlength, question, data["category"])
 
@@ -488,7 +508,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 if len(additional)>0:
                     messages[0]["content"] += f"Additional instructions:\n\n{additional}\n\n"
             
-                max_tokens, temperature, presence_penalty = 1000, 1.0, 0
+                max_tokens, temperature, presence_penalty = 500, 1.1, 0
                 prompt = f"{question}?" #prompt to store in DB
                 sources = search_result["sources"]
 
@@ -528,7 +548,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 }]
 
                 logit_bias = {}
-                max_tokens, temperature, presence_penalty = 600, 0.3, 0.2
+                max_tokens, temperature, presence_penalty = 500, 0.3, 0.2
                 #define prompt to be stored in DB
                 prompt = f"Generate content ideas for {category} about {topic}"
                 sources = []

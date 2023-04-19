@@ -378,7 +378,6 @@ function storeComposition(tasksContainer, data) {
     });
 
     taskClone.querySelector("[customID='continue-composition']").addEventListener("click", () => {
-        document.querySelector("#top").scrollIntoView({ behavior: "smooth" });
         editComposition(taskClone);
         taskClone.setAttribute("edit", "true");
     });
@@ -859,6 +858,8 @@ function generateIdeas(socket) {
     if(empty.length==0){
         document.querySelector("[customID='idea-word-count']").innerHTML = `__`;
         var destination = document.querySelector("[customID='ideas-output']");
+        //bring destination to center of screen
+        destination.scrollIntoView({ behavior: "smooth", block: "center" });
         waiting(destination);
         isWaiting = true;
         socket.addEventListener("message", function receive(event) {
@@ -936,6 +937,8 @@ function submitRewrite(socket) {
         document.querySelector("[customID='rewrite-word-count']").innerHTML = "__";
         document.querySelector("[customID='rewrite-score']").innerHTML = "";
         var destination = document.querySelector("[customID='rewrite-output']");
+        //bring destination to center of screen
+        destination.scrollIntoView({ behavior: "smooth", block: "center" });
         waiting(destination);
         isWaiting = true;
         socket.addEventListener("message", function receive(event) {
@@ -1165,6 +1168,9 @@ function submitTask(socket) {
         }
         document.querySelector("[customID='task-score']").innerHTML = "";
         var destination = document.querySelector("[customID='task-output']");
+        //bring destination to center of screen
+        destination.scrollIntoView({ behavior: "smooth", block: "center" });
+        //start waiting animation
         waiting(destination);
         isWaiting = true;
         var source_data = [];
@@ -1248,6 +1254,13 @@ function submitQuestion(socket) {
     var form = document.querySelector("[customID='submit-question']");
     var questionElement = form.querySelector("[customInput='question']");
     var searchElement = form.querySelector("[customID='search-toggle']");
+    //get ID of selected job
+    var jobIndex = form.querySelector("[customID='user-job-list']").selectedIndex-1;
+    if(jobIndex<=0||jobIndex>userJobs.length){
+        var jobID = -1
+    } else {
+        var jobID = document.querySelectorAll("[customID='job-container']")[jobIndex].getAttribute("jobID");
+    }
     //check if either typeElement or topic are missing
     var empty = [];
     if(questionElement.value===""){
@@ -1258,6 +1271,7 @@ function submitQuestion(socket) {
         "name": userName,
         "member_id": member,
         "category": "question",
+        "job_id": jobID, 
         "question": questionElement.value, 
         "additional": additionalElement.value,
         "search": searchElement.getAttribute("on")
@@ -1273,6 +1287,7 @@ function submitQuestion(socket) {
         }
 
         var destination = document.querySelector("[customID='question-output']");
+        destination.scrollIntoView({ behavior: "smooth", block: "center" });
         waiting(destination);
         isWaiting = true;
         socket.addEventListener("message", function receive(event) {
@@ -1497,6 +1512,9 @@ function editComposition(module) {
     } else {
         textElement.value = text;
     }
+
+    //scroll output to middle of screen
+    textElement.scrollIntoView({ behavior: "smooth", block: "center" });
         
     //extract type and topic from prompt
     let regex = /Write a\(n\)\s+(.+)\s+about\s+(.+)/i; //i makes regex case-insensitive
