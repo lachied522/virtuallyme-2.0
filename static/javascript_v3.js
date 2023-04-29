@@ -448,6 +448,8 @@ function getUser(counter = 0){
         })
         .then(response => response.json())
         .then(data => {
+            //hide preloader
+            hidePreloader();
             //store user description and about data
             if(data.description.length>0){
                 let descriptionWrapper = document.querySelector(".description-wrapper");
@@ -517,8 +519,6 @@ function getUser(counter = 0){
                 //hide welcome popup
                 document.querySelector(".welcome-popup").remove();
             }
-            //hide preloader
-            hidePreloader();
         })
         .catch(error => {
             console.log(error);
@@ -1553,7 +1553,6 @@ function compose(socket, request) {
             if (!option.closest(".module").classList.contains("no-hover")) {
                 option.closest(".module").classList.add("no-hover");
             } 
-            option.parentElement.replaceWith(option.parentElement.cloneNode(true)); //remove event listeners
         });
         //display options container
         optionsOutput.style.display = "flex";
@@ -1572,7 +1571,8 @@ function compose(socket, request) {
                 this.removeEventListener("message", receive);
                 optionsContainers.forEach((option, index) => {
                     option.closest(".module").classList.remove("no-hover");
-                    option.parentElement.addEventListener("click", () => {
+                    option.parentElement.addEventListener("click", function select() {
+                        option.parentElement.removeEventListener("click", select); //remove any existing event listeners
                         let text = option.innerHTML;
                         if (request!=="rewrite") {
                             appendText(text);
