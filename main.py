@@ -24,17 +24,13 @@ import math
 import traceback
 
 #openai api key
-##OPENAI_API_KEY = "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"
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 openai.api_key = OPENAI_API_KEY 
 
 #google api key
-##GOOGLE_API_KEY = "AIzaSyCm-gGY014pfYImeiLMqCYuNGQ1nf8g2eg"
-##GOOGLE_CSE_ID = "d7251a9905c2540fa"
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 GOOGLE_CSE_ID = os.getenv("GOOGLE_CSE_ID")
 
-##GPTZERO_API_KEY = "f54a4e6c855f4037aa63462aeacff06c"
 GPTZERO_API_KEY = os.getenv("GPTZERO_API_KEY")
 
 DB_BASE_URL = os.getenv("DB_BASE_URL")
@@ -103,22 +99,19 @@ async def get_logit_bias(samples):
                 else:
                     if token in tokens_dict:
                         tokens_dict[token] += 1
-                        
                     else:
-                        tokens_dict[token] = +1
+                        tokens_dict[token] = 1
 
             n_tokens += 1
     
-    
     for key, value in tokens_dict.items():
+        MAX_BIAS = 7.5
         if value > 0:
             bias = 3*math.log(1+value)/math.log(1+n_tokens)
-            #max bias is 7
-            tokens_dict[key] = min(bias, 7)
+            tokens_dict[key] = min(bias, MAX_BIAS)
         else:
             bias = -3*math.log(1-value)/math.log(1+n_tokens)
-            #max bias is -7
-            tokens_dict[key] = max(bias, -7)
+            tokens_dict[key] = max(bias, -MAX_BIAS)
 
     sorted_tokens = sorted(tokens_dict.items(), key=lambda x: x[1], reverse=True)
     #return 300 tokens with the highest bias
@@ -158,21 +151,21 @@ async def construct_prompt(user, job, maxlength, context, category):
     logit_task = asyncio.create_task(get_logit_bias(samples))
 
     if len(samples)>0:
+        #prompt is different based on whether user has selected general or specific job
         if category=="task":
-            if job < 0:
-                #split prompt up based on whether user has selected general or specific job
+            if job < 0: #general
                 prompt = f"""My name is {name}. You are an adaptive assistant called Virtually{name}.
                     I will give you samples of my writing, and then ask you to write something. You have two goals. \
-                    GOAL 1: Employ the same language, tone, word choice, sentence structure, syntax, and symantics as present in MY writing. \
+                    GOAL 1: Employ the same language, tonality, word choice, sentence structure, syntax, semantics, and complexity as present in MY writing. \
                     GOAL 2: Employ the same reasoning and rationale presented in MY writing to form your opinions."""
                 if description is not None:
                     prompt += f"\nHere is a description of my writing style to help you achieve GOAL 1:\n'''\n{description}\n'''"
                 if about is not None:
                     prompt += f"\nHere is some information about me to help you achieve GOAL 2:\n'''\n{about}\n'''\n"
-            else:
+            else: #specific
                 prompt = f"""My name is {name}. You are an adaptive assistant called Virtually{name}.
                     I will give you samples of my writing, and then ask you to write something. You have two goals. \
-                    GOAL 1: Employ the same language, tone, word choice, sentence structure, syntax, and symantics as present in MY writing. \
+                    GOAL 1: Employ the same language, tonality, word choice, sentence structure, syntax, semantics, and complexity as present in MY writing. \
                     GOAL 2: Employ the same reasoning and rationale presented in MY writing to form your opinions."""
                 if description is not None:
                     prompt += f"\nHere is a description of my writing style to help you achieve GOAL 1:\n'''\n{description}\n'''"
@@ -182,13 +175,13 @@ async def construct_prompt(user, job, maxlength, context, category):
             if job < 0:
                 prompt = f"""My name is {name}. You are an adaptive assistant called Virtually{name}. \
                 I will give you samples of my writing, and then ask you a question. \
-                You may answer the question using the same language, tone, word choice, sentence structure, syntax, and symantics as present in MY writing."""
+                You may answer the question using the same language, tonality, word choice, sentence structure, syntax, semantics and complexity as present in MY writing."""
                 if description is not None:
                     prompt += f"\nHere is a description of my writing style to help you achieve your goal:\n'''\n{description}\n'''\n"
             else:
                 prompt = f"""My name is {name}. You are an adaptive assistant called Virtually{name}. \
                 I will give you samples of my writing, and then ask you a question. You have two goals. \
-                GOAL 1: Answer the question using the same language, tone, word choice, sentence structure, and syntax as present in MY writing.\
+                GOAL 1: Answer the question using the same language, tonality, word choice, sentence structure, syntax, semantics and complexity as present in MY writing.\
                 GOAL 2: Answer the question how you imagine I might answer it."""
                 if description is not None:
                     prompt += f"\nHere is a description of my writing style to help you achieve your goals:\n'''\n{description}\n'''\n"
@@ -196,14 +189,14 @@ async def construct_prompt(user, job, maxlength, context, category):
         elif category=="rewrite":
             prompt = f"""My name is {name}. You are an adaptive assistant called Virtually{name}. \
             I will give you samples of my writing, and then ask you to rewrite a block of text. You have two goals. \
-            GOAL 1: You must rewrite the text using the same language, tone, word choice, syntax, and symantics as present in MY writing. \
+            GOAL 1: You must rewrite the text using the same language, tonality, word choice, syntax, semantics, and complexity as present in MY writing. \
             GOAL 2: As I am a human, you must rewrite the text by employing a high a degree of variation in sentence structure and complexity."""
             if description is not None:
                 prompt += f"\nHere is a description of my writing style to help you achieve your goals:\n'''\n{description}\n'''\n"
     else:
         #if no user samples, do not attempt to adapt to user
-        prompt = f"""My name is {name}. You are an adaptive assistant called Virtually{name}.
-            You must respond to my prompts using a high degree of variation in your sentence structure, syntax, and language complexity."""
+        prompt = f"""My name is {name}. You are an adaptive assistant called Virtually{name}. \
+        You must respond to my prompts using a high degree of variation in your sentence structure, syntax, and language complexity."""
 
     length = len(prompt.split()) #approximate length of prompt in words
 
@@ -625,13 +618,13 @@ async def websocket_endpoint(websocket: WebSocket):
 
             text = data["text"] 
 
-            length_tokens = 400
-            margin = 400
-            maxlength = 4097 - length_tokens - len(text.split())*4/3 - margin #prompt limit 4097 tokens
-
-            messages, logit_bias = await construct_prompt(user, job, maxlength, topic, category="task")
-            
             if data["request"]=="sentence":
+                length_tokens = 40
+                margin = 400
+                maxlength = 4097 - length_tokens - len(text.split())*4/3 - margin #prompt limit 4097 tokens
+
+                messages, logit_bias = await construct_prompt(user, job, maxlength, topic, category="task")
+                
                 if len(text) > 0:
                     messages += [
                         {"role": "user", "content": f"My prompt: write a {category} about {topic}\n"},
@@ -643,9 +636,14 @@ async def websocket_endpoint(websocket: WebSocket):
                     messages += [
                         {"role": "user", "content": f"My prompt: write a {category} about {topic}\n"}
                     ]
-                max_tokens, temperature, presence_penalty = 50, 1.1, 0
+                max_tokens, temperature, presence_penalty = length_tokens, 1.1, 0
 
             elif data["request"]=="paragraph":
+                length_tokens = 120
+                margin = 400
+                maxlength = 4097 - length_tokens - len(text.split())*4/3 - margin #prompt limit 4097 tokens
+
+                messages, logit_bias = await construct_prompt(user, job, maxlength, topic, category="task")
                 if len(text) > 0:
                     messages += [
                         {"role": "user", "content": f"My prompt: write a {category} about {topic}\n"},
@@ -656,13 +654,21 @@ async def websocket_endpoint(websocket: WebSocket):
                     messages += [
                         {"role": "user", "content": f"My prompt: write a {category} about {topic}\n"}
                     ]
-                max_tokens, temperature, presence_penalty = 100, 1.1, 0
+                max_tokens, temperature, presence_penalty = length_tokens, 1.1, 0
             
             elif data["request"]=="rewrite":
+                extract = data["extract"] #piece of text to be rewritten
+                length_tokens = round(len(extract.split())*4/3)+100 #number of tokens allowed in response
+
+                margin = 400
+                maxlength = 4097 - length_tokens*2 - len(text.split())*4/3 - margin #length_tokens appears twice, once in prompt and in completion
+
+                messages, logit_bias = await construct_prompt(user, job, maxlength, topic, category="rewrite")
+
                 messages += [
-                    {"role": "user", "content": f"My prompt: write a {category} about {topic}.\n"},
+                    {"role": "user", "content": f"My prompt: write a {category} about {topic}\n"},
                     {"role": "assistant", "content": f"{text}"},
-                    {"role": "user", "content": "Complete the next sentence."}
+                    {"role": "user", "content": f"Rewrite the following extract from the above text:\n'''\n{extract}\n'''\n"}
                 ]
                 max_tokens, temperature, presence_penalty = length_tokens, 1.1, 0
 

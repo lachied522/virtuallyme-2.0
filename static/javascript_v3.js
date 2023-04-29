@@ -1430,7 +1430,7 @@ function compose(socket, request) {
     let topicElement = form.querySelector("[customInput='topic']");
 
     var jobIndex = form.querySelector("[customID='user-job-list']").selectedIndex-1;
-    if(jobIndex<0||jobIndex>userJobs.length){
+    if (jobIndex<0||jobIndex>userJobs.length) {
         var jobID = -1
     } else {
         var jobID = document.querySelectorAll("[customID='job-container']")[jobIndex].getAttribute("jobID");
@@ -1445,17 +1445,46 @@ function compose(socket, request) {
     } else if (topicElement.value==="") {
         empty.push(topicElement);
     }
-
-    const data = {
-        "member_id": member,
-        "job_id": jobID,
-        "request": request,
-        "type": typeElement.value, 
-        "topic": topicElement.value,
-        "text": textElement.value
-    }
-
     if (empty.length===0) {
+        if (request==="rewrite") {
+            var extract = window.getSelection().toString(); //piece of text to be rewritten
+            if (extract.length===0) {
+                if (document.querySelector(".compose-overlay").classList.contains("hidden")) {
+                    //show overlay
+                    document.querySelector(".compose-overlay").classList.remove("hidden");
+                    document.querySelector(".compose-overlay").classList.add("show");
+                    //remove style attributes assigned by Webflow animation
+                    document.querySelector(".compose-overlay").removeAttribute("style");
+                }
+                return
+            } else {
+                var startPos = textElement.selectionStart;
+                var endPos = textElement.selectionEnd;
+                var data = {
+                    "member_id": member,
+                    "job_id": jobID,
+                    "request": request,
+                    "type": typeElement.value, 
+                    "topic": topicElement.value,
+                    "text": textElement.value,
+                    "extract": extract
+                }
+            }
+        } else {
+            var data = {
+                "member_id": member,
+                "job_id": jobID,
+                "request": request,
+                "type": typeElement.value, 
+                "topic": topicElement.value,
+                "text": textElement.value
+            }
+        }
+        //hide overlay
+        if (document.querySelector(".compose-overlay").classList.contains("show")) {
+            document.querySelector(".compose-overlay").classList.remove("show");
+            document.querySelector(".compose-overlay").classList.add("hidden");
+        }
         //reset options elements
         let optionsOutput = document.querySelector(".suggestions-container");
         let optionsContainers = optionsOutput.querySelectorAll(".option");
@@ -1464,14 +1493,14 @@ function compose(socket, request) {
             if (!option.closest(".module").classList.contains("no-hover")) {
                 option.closest(".module").classList.add("no-hover");
             } 
-        })
+        });
         //display options container
         optionsOutput.style.display = "flex";
         socket.addEventListener("message", function receive(event) {
             let response = JSON.parse(event.data);
             let data = response.message;
             if (data==="[START MESSAGE]") {
-                optionsContainers.forEach(option => {
+                optionsContainers.forEach((option, index) => {
                     option.innerHTML = "";
                 });
             } else if (data!=="[END MESSAGE]") {
@@ -1483,12 +1512,16 @@ function compose(socket, request) {
                 optionsContainers.forEach((option, index) => {
                     option.closest(".module").classList.remove("no-hover");
                     option.parentElement.addEventListener("click", () => {
-                        text = option.innerHTML;
-                        appendText(text);
+                        let text = option.innerHTML;
+                        if (request!=="rewrite") {
+                            appendText(text);
+                        } else {
+                            replaceText(startPos, endPos, text);
+                        }
                     })
                 });
             }
-        })
+        });
         socket.send(JSON.stringify(data));
     } else {
         var originalColor = empty[0].style.borderColor;
@@ -1503,6 +1536,12 @@ function compose(socket, request) {
 function editComposition(module) {
     let prompt = module.querySelector("[customID='tasks-header']").innerHTML;
     let text = module.querySelector("[customID='tasks-body']").innerHTML;
+
+    if (document.querySelector(".compose-overlay").classList.contains("show")) {
+        //hide overlay
+        document.querySelector(".compose-overlay").classList.remove("show");
+        document.querySelector(".compose-overlay").classList.add("hidden");
+    };
 
     //save existing composition if there is one
     let textElement = document.querySelector("[customID='compose-output']");
@@ -1694,6 +1733,14 @@ document.addEventListener("DOMContentLoaded", () => {
         let text = document.querySelector("[customID='compose-output']").value;
         let words = text.trim().split(/\s+/).length;
         document.querySelector("[customID='compose-word-count']").innerHTML = words;
+    });
+
+    //hide compose overlay when user makes selection
+    document.querySelector("[customID='compose-output']").addEventListener("focus", () => {
+        if (document.querySelector(".compose-overlay").classList.contains("show")) {
+            document.querySelector(".compose-overlay").classList.remove("show");
+            document.querySelector(".compose-overlay").classList.add("hidden");
+        }
     });
 
     document.querySelector("[customID='new-composition']").addEventListener("click", () => {
