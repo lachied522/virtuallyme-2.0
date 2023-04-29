@@ -668,7 +668,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 messages += [
                     {"role": "user", "content": f"My prompt: write a {category} about {topic}\n"},
                     {"role": "assistant", "content": f"{text}"},
-                    {"role": "user", "content": f"Rewrite the following extract from the above text:\n'''\n{extract}\n'''\n"}
+                    {"role": "user", "content": f"Rewrite the following extract from the above text. Do not give any other response, and remember to stay in character.\n'''\n{extract}\n'''\n"}
                 ]
                 max_tokens, temperature, presence_penalty = length_tokens, 1.1, 0
 
