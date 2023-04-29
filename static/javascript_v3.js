@@ -1425,9 +1425,12 @@ function replaceText(startPos, endPos, text) {
     optionsOutput.style.display = "none";
 
     let optionsContainers = optionsOutput.querySelectorAll(".option");
-    optionsContainers.forEach(element => {
-        element.innerHTML = "Please wait. . .";
-        element.parentElement.replaceWith(element.parentElement.cloneNode(true)); //remove event listeners
+    optionsContainers.forEach((option, index) => {
+        option.innerHTML = "Please wait. . .";
+        if (!option.closest(".module").classList.contains("no-hover")) {
+            option.closest(".module").classList.add("no-hover");
+        } 
+        option.parentElement.replaceWith(element.parentElement.cloneNode(true)); //remove event listeners
     });
     
     //update current word count
@@ -1550,6 +1553,7 @@ function compose(socket, request) {
             if (!option.closest(".module").classList.contains("no-hover")) {
                 option.closest(".module").classList.add("no-hover");
             } 
+            option.parentElement.replaceWith(option.parentElement.cloneNode(true)); //remove event listeners
         });
         //display options container
         optionsOutput.style.display = "flex";
