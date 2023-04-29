@@ -1400,7 +1400,6 @@ function appendText(text) {
             detectGPT(document.querySelector("[customID='compose-score']").parentElement, score);
         })
     }
-
     //update DB
     let value = text.split(" ").length;
     let data = {
@@ -1413,7 +1412,65 @@ function appendText(text) {
         headers: {
             "Content-Type": "application/json"
         }
-    })
+    });
+}
+
+
+function replaceText(startPos, endPos, text) {
+    //for rewriting compositions
+    let composeOutput = document.querySelector("[customID='compose-output']");
+    composeOutput.value = composeOutput.value.substring(0, startPos) + text + composeOutput.value.substring(endPos);
+
+    let optionsOutput = document.querySelector(".suggestions-container");
+    optionsOutput.style.display = "none";
+
+    let optionsContainers = optionsOutput.querySelectorAll(".option");
+    optionsContainers.forEach(element => {
+        element.innerHTML = "Please wait. . .";
+        element.parentElement.replaceWith(element.parentElement.cloneNode(true)); //remove event listeners
+    });
+    
+    //update current word count
+    let words = composeOutput.value.trim().split(" ").length;
+    document.querySelector("[customID='compose-word-count']").innerHTML = words;
+
+    //update user words 
+    updateUserWords(userWordCount+words);
+
+    if (words>50) {
+        //update detection score
+        let output = composeOutput.value;
+        //detect gpt
+        let url = `${WEB_SERVER_BASE_URL}/detect`;
+        let data = {
+            "text": String(output)
+        }
+        console.log(data);
+        fetch(url, {
+            method: "POST",
+            body: JSON.stringify(data),
+            headers: {
+                "Content-Type": "application/json"
+            }
+        })
+        .then(response => response.text())
+        .then(score => {
+            detectGPT(document.querySelector("[customID='compose-score']").parentElement, score);
+        })
+    }
+    //update DB
+    let value = text.split(" ").length;
+    let data = {
+        "member_id": member,
+        "value": value
+    }
+    fetch("https://virtuallyme.onrender.com/update_user_words", {
+        method: "POST",
+        body: JSON.stringify(data),
+        headers: {
+            "Content-Type": "application/json"
+        }
+    });
 }
 
 
