@@ -368,7 +368,7 @@ async def conduct_search(query):
         if len(joined_context) > 0:
             message = [{
                 "role": "user", 
-                "content": f"I would like to write about {query}. Using at least 300 words, summarise the relevant points from the following text, using numerical in-text citation with square brackets, e.g. [x], where necessary. Make sure to include any relevant dates, stats, or figures. Text:\n{joined_context}"
+                "content": f"I would like to write about {query}. Using at least 300 words, summarise the relevant points from the following text, using numerical in-text citation with square brackets, e.g. [x], where necessary. Make sure to include any relevant dates, stats, or figures. Text:\n{joined_context}\n"
             }]
             completion = turbo_openai_call(message, 450, 0, 0.4) #300 words ~ 400 tokens, 450 with buffer
         else:
@@ -476,7 +476,7 @@ async def websocket_endpoint(websocket: WebSocket, user: str):
 
                         if search_result != "":
                             context = search_result
-                            messages.append({"role": "system", "content": f"You may use following context to write your response. If the context is not relevant you may disregard it. Make sure not to deviate from your persona.\nContext: {context}"})
+                            messages.append({"role": "system", "content": f"You may use following context to write your response. If the context is not relevant you may disregard it. Make sure not to deviate from your persona.\nContext: {context}\n"})
 
                     else:
                         search_result = ""
@@ -516,7 +516,7 @@ async def websocket_endpoint(websocket: WebSocket, user: str):
                         
                         if search_result != "":
                             context = search_result
-                            messages.append({"role": "system", "content": f"You may use following context to answer the question. If the context is not relevant you may disregard it.\n\nContext: {context}"})
+                            messages.append({"role": "system", "content": f"You may use following context to answer the question. If the context is not relevant you may disregard it.\n\nContext: {context}\n"})
 
                     else:
                         search_result = ""
