@@ -1,3 +1,4 @@
+import os
 from datetime import datetime
 from pydantic import BaseModel
 from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, ForeignKey

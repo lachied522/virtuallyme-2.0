@@ -10,4 +10,3 @@ tiktoken
 scikit-learn
 beautifulsoup4
 google-api-python-client
-beautifulsoup4
