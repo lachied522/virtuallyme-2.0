@@ -1376,7 +1376,8 @@ function submitQuestion(socket) {
 
 
 function appendText(text) {
-    document.querySelector(".compose-output").value += text;
+    let composeOutput = document.querySelector("[customID='compose-output']");
+    composeOutput.value += text;
 
     let optionsOutput = document.querySelector(".suggestions-container");
     optionsOutput.style.display = "none";
@@ -1390,7 +1391,6 @@ function appendText(text) {
         option.parentElement.replaceWith(option.parentElement.cloneNode(true)); //remove event listeners
     });
     //update current word count
-    let composeOutput = document.querySelector(".compose-output");
     let words = composeOutput.value.trim().split(" ").length;
     document.querySelector("[customID='compose-word-count']").innerHTML = words;
     
@@ -1591,7 +1591,6 @@ function compose(socket, category) {
                 optionsContainers.forEach((option, index) => {
                     option.closest(".module").classList.remove("no-hover");
                     option.parentElement.addEventListener("click", function select() {
-                        option.parentElement.removeEventListener("click", select); //remove any existing event listeners
                         let text = option.innerHTML;
                         if (category!=="rewrite") {
                             appendText(text);
@@ -1690,8 +1689,6 @@ function removeComposition(module) {
     module.remove();
 }
 
-
-
 function saveComposition() {
     let form = document.querySelector("[customID='compose-input']");
     let typeElement = form.querySelector("[customInput='type']");
@@ -1716,6 +1713,9 @@ function saveComposition() {
 
     //reset word count
     document.querySelector("[customID='compose-word-count']").innerHTML = 0;
+
+    //hide suggestions container
+    document.querySelector(".suggestions-container").style.display = "none";
 
     let recentCompositions = document.querySelector("[customID='recent-compositions']");
     let modules = recentCompositions.querySelectorAll(".module");
