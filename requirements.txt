@@ -3,6 +3,7 @@ fastapi
 websockets
 pydantic
 sqlalchemy
+psycopg2
 asyncio
 aiohttp
 openai
