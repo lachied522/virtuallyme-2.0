@@ -441,21 +441,20 @@ function getUser(counter = 0){
     if(counter>=3){
         return
     } else {
-        const url = `${WEB_SERVER_BASE_URL}/get_user/${String(member)}`;
+        const url = `https://virtuallyme.onrender.com/get_user/${member}`;
         fetch(url, {
-            method: "GET",
-            headers: {},
+            method: "GET"
         })
         .then(response => response.json())
         .then(data => {
-            //hide preloader
-            hidePreloader();
             //store user description and about data
-            if(data.description.length>0){
+            if (data.description.length>0) {
                 let descriptionWrapper = document.querySelector(".description-wrapper");
                 descriptionWrapper.querySelector(".text-300").innerHTML = data.description;
                 descriptionWrapper.style.display = "block";
                 document.querySelector(".description-empty-text").style.display = "none";
+                //hide welcome popup
+                document.querySelector(".welcome-popup").remove();
             }
             //store task data
             for (let i = 0; i < data.tasks.length; i++) {
@@ -501,24 +500,8 @@ function getUser(counter = 0){
             }
             //update user word count
             updateUserWords(data.words);
-            //add job data
-            for(let i=0; i < data.user.length; i++){
-                let newJobElement = newJob(data.user[i].name);
-                //set job_id
-                newJobElement.setAttribute("jobID", data.user[i].job_id);
-                
-                let samplesGrid = newJobElement.querySelector(".samples-grid");
-                let sampleWrapper = samplesGrid.querySelector(".sample-wrapper");
-                for(let j=0; j < data.user[i].data.length; j++){
-                    samplesGrid.appendChild(newSample(newJobElement, sampleWrapper, data.user[i].data[j].completion));
-                }
-                updateJobWords(newJobElement);
-                newJobElement.setAttribute("saved", "true");
-            }
-            if (data.user.length>0||data.words>0) {
-                //hide welcome popup
-                document.querySelector(".welcome-popup").remove();
-            }
+            //hide preloader
+            hidePreloader();
         })
         .catch(error => {
             console.log(error);
@@ -526,6 +509,23 @@ function getUser(counter = 0){
                 getUser(counter+1);
             }, 30);
         })
+    }
+}
+
+function storeJobData(data) {
+    //store job data
+    for (let i=0; i < data.user.length; i++) {
+        let newJobElement = newJob(data.user[i].name);
+        //set job_id
+        newJobElement.setAttribute("jobID", data.user[i].job_id);
+        //store data
+        let samplesGrid = newJobElement.querySelector(".samples-grid");
+        let sampleWrapper = samplesGrid.querySelector(".sample-wrapper");
+        for(let j=0; j < data.user[i].data.length; j++){
+            samplesGrid.appendChild(newSample(newJobElement, sampleWrapper, data.user[i].data[j].completion));
+        }
+        updateJobWords(newJobElement);
+        newJobElement.setAttribute("saved", "true");
     }
 }
 
@@ -1163,9 +1163,10 @@ function submitTask(socket) {
         document.querySelector("[customID='task-word-count']").innerHTML = "__";
 
         var sourcesContainer = document.querySelector("[customID='task-sources-container']");
-        if(searchElement.getAttribute("on")==="false"){
+        if (data["search"]==="false") {
             sourcesContainer.style.display = "none";
         }
+        sourcesContainer.querySelector(".search-error").style.display = "none";
         document.querySelector("[customID='task-score']").innerHTML = "";
         var destination = document.querySelector("[customID='task-output']");
         //bring destination to center of screen
@@ -1176,12 +1177,12 @@ function submitTask(socket) {
         var source_data = [];
         socket.addEventListener("message", function receive(event) {
             let response = JSON.parse(event.data);
-            let data = response.message;
-            if (data==="[START MESSAGE]") {
+            let message = response.message;
+            if (message==="[START MESSAGE]") {
                 clearInterval(waitingInterval);
                 destination.textContent = "";
-            } else if (data!=="[END MESSAGE]") {
-                destination.textContent += data;
+            } else if (message!=="[END MESSAGE]") {
+                destination.textContent += message;
                 destination.scrollTop = destination.scrollHeight;
             } else {
                 isWaiting = false;
@@ -1194,27 +1195,35 @@ function submitTask(socket) {
                 document.querySelector("[customID='task-word-count']").innerHTML = String(words);
                 //update detection score
                 detectGPT(document.querySelector("[customID='task-score']").parentElement, response.score);
+                //show task options buttons
+                document.querySelector(".task-options-buttons").style.display = "flex";
                 //update user words
                 updateUserWords(userWordCount+words);
                 //handle sources
                 const recentTasksContainer = document.querySelector("#recent-tasks");
-                if (response.hasOwnProperty('sources')) {
-                    const sources = response.sources;
-                    sourcesContainer.style.display = "flex"
-                    sourcesContainer.querySelectorAll(".source-wrapper").forEach((wrapper, index) => {
-                        if(index<response.sources.length){
-                            source_data = response.sources[index];
-                            wrapper.querySelector(".link").innerHTML = source_data.display;
-                            wrapper.querySelector(".source-link").href = source_data.url;
-                            wrapper.querySelector(".source-link").target = "_blank";
-                            wrapper.querySelector(".sources-text.title").innerHTML = source_data.title;
-                            wrapper.querySelector(".sources-text").innerHTML = source_data.preview;
-                            wrapper.style.display = "block";
-                        } else {
-                            wrapper.style.display = "none";
-                        }
-                    })
-                    storeTask(recentTasksContainer, {"prompt": `Write a(n) ${typeElement.value} about ${topicElement.value}`, "completion": destination.textContent, "score": response.score, "sources": sources});
+                if (data["search"]==="true") {
+                    if (response.hasOwnProperty('sources')) {
+                        const sources = response.sources;
+                        sourcesContainer.style.display = "flex"
+                        sourcesContainer.querySelectorAll(".source-wrapper").forEach((wrapper, index) => {
+                            if(index<response.sources.length){
+                                source_data = response.sources[index];
+                                wrapper.querySelector(".link").innerHTML = source_data.display;
+                                wrapper.querySelector(".source-link").href = source_data.url;
+                                wrapper.querySelector(".source-link").target = "_blank";
+                                wrapper.querySelector(".sources-text.title").innerHTML = source_data.title;
+                                wrapper.querySelector(".sources-text").innerHTML = source_data.preview;
+                                wrapper.style.display = "block";
+                            } else {
+                                wrapper.style.display = "none";
+                            }
+                        });
+                        storeTask(recentTasksContainer, {"prompt": `Write a(n) ${typeElement.value} about ${topicElement.value}`, "completion": destination.textContent, "score": response.score, "sources": sources});
+                    } else {
+                        //error generating search
+                        sourcesContainer.querySelector(".search-error").style.display = "block";
+                        storeTask(recentTasksContainer, {"prompt": `Write a(n) ${typeElement.value} about ${topicElement.value}`, "completion": destination.textContent, "score": response.score, "sources": []});
+                    }                    
                 } else {
                     storeTask(recentTasksContainer, {"prompt": `Write a(n) ${typeElement.value} about ${topicElement.value}`, "completion": destination.textContent, "score": response.score, "sources": []});
                 }
@@ -1282,22 +1291,23 @@ function submitQuestion(socket) {
         document.querySelector("[customID='question-score']").innerHTML = "";
 
         var sourcesContainer = document.querySelector("[customID='question-sources-container']");
-        if(searchElement.getAttribute("on")==="false"){
+        if (data["search"]==="false") {
+            //hide sources container
             sourcesContainer.style.display = "none";
         }
-
+        sourcesContainer.querySelector(".search-error").style.display = "none";
         var destination = document.querySelector("[customID='question-output']");
         destination.scrollIntoView({ behavior: "smooth", block: "center" });
         waiting(destination);
         isWaiting = true;
         socket.addEventListener("message", function receive(event) {
             let response = JSON.parse(event.data);
-            let data = response.message;
-            if (data==="[START MESSAGE]") {
+            let message = response.message;
+            if (message==="[START MESSAGE]") {
                 clearInterval(waitingInterval);
                 destination.textContent = "";
-            } else if (data!=="[END MESSAGE]") {
-                destination.textContent += data;
+            } else if (message!=="[END MESSAGE]") {
+                destination.textContent += message;
                 destination.scrollTop = destination.scrollHeight;
             } else {
                 isWaiting = false;
@@ -1311,28 +1321,33 @@ function submitQuestion(socket) {
                 updateUserWords(userWordCount+words);
                 //store task
                 var recentQuestionContainer = document.querySelector("#recent-questions");
-                if (response.hasOwnProperty('sources')) {
-                    //handle sources
-                    const sources = response.sources;
-                    sourcesContainer.style.display = "flex";
-                    sourcesContainer.querySelectorAll(".source-wrapper").forEach((wrapper, index) => {
-                        if (index<response.sources.length) {
-                            let source_data = response.sources[index];
-                            wrapper.querySelector(".link").innerHTML = source_data.display;
-                            wrapper.querySelector(".source-link").href = source_data.url;
-                            wrapper.querySelector(".source-link").target = "_blank";
-                            wrapper.querySelector(".sources-text.title").innerHTML = source_data.title;
-                            wrapper.querySelector(".sources-text").innerHTML = source_data.preview;
-                            wrapper.style.display = "block";
-                        } else {
-                            wrapper.style.display = "none";
-                        }
-                    })
-                    storeTask(recentQuestionContainer, {"prompt": questionElement.value, "completion": destination.textContent, "score": response.score, "sources": sources});
+                if (data["search"]==="true") {
+                    if (response.hasOwnProperty('sources')) {
+                        //handle sources
+                        const sources = response.sources;
+                        sourcesContainer.style.display = "flex";
+                        sourcesContainer.querySelectorAll(".source-wrapper").forEach((wrapper, index) => {
+                            if (index<response.sources.length) {
+                                let source_data = response.sources[index];
+                                wrapper.querySelector(".link").innerHTML = source_data.display;
+                                wrapper.querySelector(".source-link").href = source_data.url;
+                                wrapper.querySelector(".source-link").target = "_blank";
+                                wrapper.querySelector(".sources-text.title").innerHTML = source_data.title;
+                                wrapper.querySelector(".sources-text").innerHTML = source_data.preview;
+                                wrapper.style.display = "block";
+                            } else {
+                                wrapper.style.display = "none";
+                            }
+                        })
+                        storeTask(recentQuestionContainer, {"prompt": questionElement.value, "completion": destination.textContent, "score": response.score, "sources": sources});
+                    } else {
+                        //error generating search
+                        sourcesContainer.querySelector(".search-error").style.display = "block";
+                        storeTask(recentQuestionContainer, {"prompt": questionElement.value, "completion": destination.textContent, "score": response.score, "sources": []});
+                    }
                 } else {
                     storeTask(recentQuestionContainer, {"prompt": questionElement.value, "completion": destination.textContent, "score": response.score, "sources": []});
                 }
-
                 var taskLength = recentQuestionContainer.querySelectorAll(".module").length;
                 if(taskLength-1>5){
                     recentQuestionContainer.querySelectorAll(".module")[taskLength-1].remove();
@@ -1367,11 +1382,13 @@ function appendText(text) {
     optionsOutput.style.display = "none";
 
     let optionsContainers = optionsOutput.querySelectorAll(".option");
-    optionsContainers.forEach(element => {
-        element.innerHTML = "Please wait. . .";
-        element.parentElement.replaceWith(element.parentElement.cloneNode(true)); //remove event listeners
+    optionsContainers.forEach((option, index) => {
+        option.innerHTML = "Please wait. . .";
+        if (!option.closest(".module").classList.contains("no-hover")) {
+            option.closest(".module").classList.add("no-hover");
+        } 
+        option.parentElement.replaceWith(option.parentElement.cloneNode(true)); //remove event listeners
     });
-    
     //update current word count
     let composeOutput = document.querySelector(".compose-output");
     let words = composeOutput.value.trim().split(" ").length;
@@ -1430,7 +1447,7 @@ function replaceText(startPos, endPos, text) {
         if (!option.closest(".module").classList.contains("no-hover")) {
             option.closest(".module").classList.add("no-hover");
         } 
-        option.parentElement.replaceWith(element.parentElement.cloneNode(true)); //remove event listeners
+        option.parentElement.replaceWith(option.parentElement.cloneNode(true)); //remove event listeners
     });
     
     //update current word count
@@ -1477,7 +1494,7 @@ function replaceText(startPos, endPos, text) {
 }
 
 
-function compose(socket, request) {
+function compose(socket, category) {
     if (isWaiting) {
         //if still waiting, do nothing
         return
@@ -1506,7 +1523,7 @@ function compose(socket, request) {
         empty.push(topicElement);
     }
     if (empty.length===0) {
-        if (request==="rewrite") {
+        if (category==="rewrite") {
             var extract = window.getSelection().toString(); //piece of text to be rewritten
             if (extract.length===0) {
                 if (document.querySelector(".compose-overlay").classList.contains("hidden")) {
@@ -1523,21 +1540,23 @@ function compose(socket, request) {
                 var data = {
                     "member_id": member,
                     "job_id": jobID,
-                    "request": request,
+                    "category": category,
                     "type": typeElement.value, 
                     "topic": topicElement.value,
                     "text": textElement.value,
-                    "extract": extract
+                    "extract": extract,
+                    "compose": "true"
                 }
             }
         } else {
             var data = {
                 "member_id": member,
                 "job_id": jobID,
-                "request": request,
+                "category": category,
                 "type": typeElement.value, 
                 "topic": topicElement.value,
-                "text": textElement.value
+                "text": textElement.value,
+                "compose": "true"
             }
         }
         //hide overlay
@@ -1574,7 +1593,7 @@ function compose(socket, request) {
                     option.parentElement.addEventListener("click", function select() {
                         option.parentElement.removeEventListener("click", select); //remove any existing event listeners
                         let text = option.innerHTML;
-                        if (request!=="rewrite") {
+                        if (category!=="rewrite") {
                             appendText(text);
                         } else {
                             replaceText(startPos, endPos, text);
@@ -1645,8 +1664,10 @@ function editComposition(module) {
         //pass
     }
 
-    //set edit attribute to true
-    module.setAttribute("edit", "true");
+    if (module.getAttribute("category")==="compose") {
+        //set edit attribute to true
+        module.setAttribute("edit", "true");
+    }
     //show compose dropdown in case it is not already shown
     document.querySelector(".compose-dropdown").style.display = "block";
 }
@@ -1739,52 +1760,56 @@ function saveComposition() {
 
 document.addEventListener("DOMContentLoaded", () => {
     pageLoad();
-    const WEB_SOCKET_URL = "wss://virtuallyme2-0.onrender.com/ws";
+
     socket = new WebSocket(WEB_SOCKET_URL);
 
-    let tasks = ["task", "question", "rewrite", "idea"];
+    socket.addEventListener("message", function loadData(event) {
+        console.log(typeof event.data);
+        storeJobData(JSON.parse(event.data));
+        socket.removeEventListener("message", loadData);
+    });
+
+
+    let task_array = ["task", "question", "rewrite", "idea"];
     document.querySelectorAll(".task-wrapper").forEach((wrapper, index) => {
         wrapper.querySelector(".generate-button").addEventListener("click", () => {
             if(socket.readyState !== WebSocket.CLOSED){
-                if (tasks[index]==="task") {
+                if (task_array[index]==="task") {
                     submitTask(socket);
-                } else if (tasks[index]==="idea") {
+                } else if (task_array[index]==="idea") {
                     generateIdeas(socket);
-                } else if (tasks[index]==="rewrite") {
+                } else if (task_array[index]==="rewrite") {
                     submitRewrite(socket);
-                } else if (tasks[index]=="question") {
+                } else if (task_array[index]=="question") {
                     submitQuestion(socket);
                 }
             } else {
                 socket = new WebSocket(WEB_SOCKET_URL);
                 socket.addEventListener("open", () => {
-                    if (tasks[index]==="task") {
+                    if (task_array[index]==="task") {
                         submitTask(socket);
-                    } else if (tasks[index]==="idea") {
+                    } else if (task_array[index]==="idea") {
                         generateIdeas(socket);
-                    } else if (tasks[index]==="rewrite") {
+                    } else if (task_array[index]==="rewrite") {
                         submitRewrite(socket);
-                    } else if (tasks[index]=="question") {
+                    } else if (task_array[index]=="question") {
                         submitQuestion(socket);
                     }
                 });
             }
         })
     });
-
-    const COMPOSE_SOCKET_URL = "wss://virtuallyme2-0.onrender.com/compose";
-    let composeSocket = new WebSocket(COMPOSE_SOCKET_URL);
     
-    let requests = ["sentence", "paragraph", "rewrite"];
+    let compose_array = ["sentence", "paragraph", "rewrite"];
     document.querySelectorAll(".compose-button").forEach((button, index) => {
         button.addEventListener("click", () => {
-            if (composeSocket.readyState !== WebSocket.CLOSED) {
-                compose(composeSocket, requests[index]);
+            if (socket.readyState !== WebSocket.CLOSED) {
+                compose(socket, compose_array[index]);
             } else {
-                composeSocket = new WebSocket(COMPOSE_SOCKET_URL);
-                composeSocket.addEventListener("open", () => {
-                    compose(composeSocket, requests[index]);
-                })
+                socket = new WebSocket(socket);
+                socket.addEventListener("open", () => {
+                    compose(socket, compose_array[index]);
+                });
             }
         });
     });
@@ -1829,6 +1854,26 @@ document.addEventListener("DOMContentLoaded", () => {
     document.querySelector("[customID='compose-save-button']").addEventListener("click", () => {
         saveComposition();
     }); 
+
+    document.querySelector("[customID='task-to-compose']").addEventListener("click", () => {
+        if (isWaiting) {
+            return
+        } else {
+            let recentTasksContainer = document.querySelector("#recent-tasks");
+            editComposition(recentTasksContainer.querySelectorAll(".module")[1]); //get most recent task
+        }
+    });
+
+    document.querySelector("[customID='task-to-rewrite']").addEventListener("click", () => {
+        if (isWaiting) {
+            return
+        } else {
+            let text = document.querySelector("[customID='task-output']").value;
+            let form = document.querySelector("[customID='submit-rewrite']");
+            form.querySelector("[customInput='text']").value = text;
+            form.querySelector("[customInput='text']").scrollIntoView({ behavior: "smooth", block: "center" });
+        }
+    });
 });
 
 setInterval(() => {
@@ -1847,5 +1892,6 @@ setInterval(() => {
     })
 }, 60000)
 
+const WEB_SOCKET_URL = `wss://virtuallyme2-0.onrender.com/ws/${member}`
 const WEB_SERVER_BASE_URL = "https://virtuallyme2-0.onrender.com";
 let isWaiting = false;

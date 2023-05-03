@@ -5,6 +5,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from websockets.exceptions import ConnectionClosedError
 from pydantic import BaseModel
 
+from database import User, Job, Task, Source, Data, Session
+
 import asyncio
 import aiohttp
 from bs4 import BeautifulSoup
@@ -118,42 +120,58 @@ async def get_logit_bias(samples):
     return dict(sorted_tokens[:300])
 
 
-async def get_data(member_id, job_id=-1):
+async def get_data(member_id):
     """
-    Get user data from DB
+    Get user data from DB. User data is streamed back to client. Data relevant to constructing prompt are stored in memory.
     """
-    headers = {
-        "member_id": member_id,
-        "job_id": str(job_id) #cannot serialise int types
-    }
-    async with aiohttp.ClientSession(headers=headers) as session:
-        url = f"{DB_BASE_URL}/get_data"
-        async with session.get(url) as response:
-            data = await response.read()
+    
+    with Session() as session:
+        #preliminary data
+        user = session.query(User.id, User.name, User.description, User.about, User.monthly_words).filter_by(id=member_id).first()
+        user_data = {
+            "name": user.name,
+            "description": user.description,
+            "about": user.about,
+            "words": user.monthly_words
+            }
+        #job data
+        jobs = session.query(Job.id, Job.name, Job.word_count).filter_by(user_id=member_id).all()
+        job_list = []
+        for job in jobs:
+            job_list.append({"job_id": job.id, "name": job.name, "word_count": job.word_count, "data": []})
+            for sample in session.query(Data).filter_by(job_id=job.id).all():
+                job_list[-1]["data"].append({"prompt": sample.prompt, "completion": sample.completion, "feedback": sample.feedback})
 
-    response_dict = json.loads(data)
+    user_data["user"] = job_list
+    
+    return user_data
 
-    return response_dict["name"], response_dict["description"], response_dict["about"], response_dict["samples"]
 
-
-async def construct_prompt(user, job, maxlength, context, category):
+async def construct_prompt(user_data, category, context, maxlength, job=-1):
     """
     construct messages from user data
     :param user: User object instance
-    :param job_id: 
     :param maxlength: max length for prompt in tokens
     :param context: current prompt to rank samples by
     :param category: task, question, rewrite, composition
     """
+    #extract user data
+    name = user_data["name"]
+    description = user_data["description"]
+    about = user_data["about"]
+    if job > 0:
+        samples = [s for d in user_data["user"] for s in d["data"] if d["job_id"]==job]
+    else:
+        samples = [s for d in user_data["user"] for s in d["data"]]
 
-    name, description, about, samples = await get_data(user, job)
     #initiate logit task
     logit_task = asyncio.create_task(get_logit_bias(samples))
 
     if len(samples)>0:
         #prompt is different based on whether user has selected general or specific job
         if category=="task":
-            if job < 0: #general
+            if job < 0: 
+                #general
                 prompt = f"""My name is {name}. You are an adaptive assistant called Virtually{name}.
                     I will give you samples of my writing, and then ask you to write something. You have two goals. \
                     GOAL 1: Employ the same language, tonality, word choice, sentence structure, syntax, semantics, and complexity as present in MY writing. \
@@ -162,7 +180,8 @@ async def construct_prompt(user, job, maxlength, context, category):
                     prompt += f"\nHere is a description of my writing style to help you achieve GOAL 1:\n'''\n{description}\n'''"
                 if about is not None:
                     prompt += f"\nHere is some information about me to help you achieve GOAL 2:\n'''\n{about}\n'''\n"
-            else: #specific
+            else: 
+                #specific
                 prompt = f"""My name is {name}. You are an adaptive assistant called Virtually{name}.
                     I will give you samples of my writing, and then ask you to write something. You have two goals. \
                     GOAL 1: Employ the same language, tonality, word choice, sentence structure, syntax, semantics, and complexity as present in MY writing. \
@@ -173,12 +192,13 @@ async def construct_prompt(user, job, maxlength, context, category):
                     prompt += f"\nHere is some information about me to help you achieve GOAL 2:\n'''\n{about}\n'''\n"
         elif category=="question":
             if job < 0:
+                #general
                 prompt = f"""My name is {name}. You are an adaptive assistant called Virtually{name}. \
-                I will give you samples of my writing, and then ask you a question. \
-                You may answer the question using the same language, tonality, word choice, sentence structure, syntax, semantics and complexity as present in MY writing."""
+                I will ask you a question. I want you to give an in-depth and sophisticated answer, while using language that is consistent with mine."""
                 if description is not None:
-                    prompt += f"\nHere is a description of my writing style to help you achieve your goal:\n'''\n{description}\n'''\n"
+                    prompt += f"\nHere is a description of my writing style:\n'''\n{description}\n'''\n"
             else:
+                #specific
                 prompt = f"""My name is {name}. You are an adaptive assistant called Virtually{name}. \
                 I will give you samples of my writing, and then ask you a question. You have two goals. \
                 GOAL 1: Answer the question using the same language, tonality, word choice, sentence structure, syntax, semantics and complexity as present in MY writing.\
@@ -286,13 +306,12 @@ async def scrape(url, session):
     
 
 async def conduct_search(query):    
-    api_key = "AIzaSyCm-gGY014pfYImeiLMqCYuNGQ1nf8g2eg"
     cse_ID = "d7251a9905c2540fa"
     #add current date in MMMM-YYYY format to Google search query
     current_date = datetime.now()
     date_string = current_date.strftime("%B %Y")
 
-    resource = build("customsearch", "v1", developerKey=api_key).cse()
+    resource = build("customsearch", "v1", developerKey=GOOGLE_API_KEY).cse()
     result = resource.list(q=query + f" {date_string} -headlines -video -pdf", cx=cse_ID).execute()
 
     result_list = []
@@ -309,7 +328,7 @@ async def conduct_search(query):
             "title": item["title"],
             "preview": preview
         })
-    #links = [item["link"] for item in result["items"]]
+
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36",
         "Accept-Language": "en-US,en;q=0.9", 
@@ -345,18 +364,22 @@ async def conduct_search(query):
                         reference_number = len(set(urls))+1
                     joined_context += f"Source {reference_number}:" + d["text"] + "\n"
                     urls.append(url)
-        message = [{
-            "role": "user", 
-            "content": f"I would like to write about {query}. Using at least 300 words, summarise the relevant points from the following text, using numerical in-text citation with square brackets, e.g. [x], where necessary. Make sure to include any relevant dates, stats, or figures. Text:\n{joined_context}"
-        }]
-        completion = turbo_openai_call(message, 450, 0, 0.4) #300 words ~ 400 tokens, 450 with buffer
-        
+
+        if len(joined_context) > 0:
+            message = [{
+                "role": "user", 
+                "content": f"I would like to write about {query}. Using at least 300 words, summarise the relevant points from the following text, using numerical in-text citation with square brackets, e.g. [x], where necessary. Make sure to include any relevant dates, stats, or figures. Text:\n{joined_context}"
+            }]
+            completion = turbo_openai_call(message, 450, 0, 0.4) #300 words ~ 400 tokens, 450 with buffer
+        else:
+            raise Exception("Search returned no results")
+
         sources = [d for d in result_list if d["url"] in list(set(urls))[:5]]
 
-        return {"result": completion, "urls": list(set(urls))[:5], "sources": sources}
+        return completion, sources
     except Exception as e:
-        print(e)
-        return {"result": "", "urls": [], "sources": []}
+        traceback.print_exc()
+        return "", []
 
 
 async def store_task(member_id, category, prompt, completion, score=None, sources=[], job_id=None):
@@ -406,7 +429,7 @@ async def get_user(member_id):
 @app.post("/search_web")
 async def search_web(query: Query):
     query_dict = query.dict()
-    result = await conduct_search(str(query_dict["query"]))
+    result, sources = await conduct_search(str(query_dict["query"]))
     return result
 
 @app.post("/detect")
@@ -415,137 +438,205 @@ async def detect(subject: Subject):
     score = await predict_text(str(document["text"]))
     return score
 
-@app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
+@app.websocket("/ws/{user}")
+async def websocket_endpoint(websocket: WebSocket, user: str):
     await websocket.accept()
+    #get user data
+    user_data = await get_data(user)
+    await websocket.send_json(user_data)
     try:
         while True:
             data = await websocket.receive_json()
-            if data["category"]=="task":
-                user = data["member_id"]
+            sources = None
+
+            compose = "compose" in data.keys()
+            if not compose:
+                n = 1 #number of options to generate
+                if data["category"]=="task":
+                    job = int(data["job_id"])
+
+                    category = data["type"]
+                    topic = data["topic"]
+                    additional = data["additional"]
+                    length = int(data["length"])
+                    search = data["search"]=="true" #bool
+                    
+                    length_tokens = round(length*4/3)  #one token ~ 3/4 word
+                    margin = 400  #allow for uncounted tokens and fluctuations in token count
+
+                    if search:
+                        maxlength = 4097 - 450 - length_tokens - len(additional.split())*4/3 - margin #prompt limit 4097 tokens
+
+                        #search web and get user data simultaneously 
+                        search_task = asyncio.create_task(conduct_search(topic))
+                        construct_task = asyncio.create_task(construct_prompt(user_data, data["category"], topic, maxlength, job))
+
+                        search_result, sources = await search_task
+                        messages, logit_bias = await construct_task
+
+                        if search_result != "":
+                            context = search_result
+                            messages.append({"role": "system", "content": f"You may use following context to write your response. If the context is not relevant you may disregard it. Make sure not to deviate from your persona.\nContext: {context}"})
+
+                    else:
+                        search_result = ""
+
+                        maxlength = 4097 - length_tokens - len(additional.split())*4/3 - margin #prompt limit 4097 tokens
+
+                        messages, logit_bias = await construct_prompt(user_data, data["category"], topic, maxlength, job)
+
+                    messages[0]["content"] += f"\n\nMy prompt: write a {category} about {topic}.\n\n"
+
+                    if len(additional)>0:
+                        messages[0]["content"] += f"Additional instructions:\n\n{additional}\n\n"
+
+                    max_tokens, temperature, presence_penalty = length_tokens, 1.1, 0.1
+                    prompt = f"Write a(n) {category} about {topic}." #prompt to store in DB
+
+                elif data["category"]=="question":
+                    job = int(data["job_id"])
+
+                    question = data["question"]
+                    additional = data["additional"]
+                    search = data["search"]=="true"
+
+                    
+                    margin = 400  #allow for uncounted tokens and fluctuations in token count
+                    if search:
+                        if job > 0:
+                            maxlength = 4097 - 450 - len(additional.split())*4/3 - margin #prompt limit 4097 tokens - 450 for search result
+                        else:
+                            maxlength = 0
+                        #search web and construct messages simultaneously 
+                        search_task = asyncio.create_task(conduct_search(question))
+                        construct_task = asyncio.create_task(construct_prompt(user_data, data["category"], question, maxlength, job))
+                        
+                        search_result, sources = await search_task
+                        messages, logit_bias = await construct_task
+                        
+                        if search_result != "":
+                            context = search_result
+                            messages.append({"role": "system", "content": f"You may use following context to answer the question. If the context is not relevant you may disregard it.\n\nContext: {context}"})
+
+                    else:
+                        search_result = ""
+
+                        if job > 0:
+                            maxlength = 4097  - len(additional.split())*4/3 - margin #prompt limit 4097 tokens
+                        else:
+                            maxlength = 0
+
+                        messages, logit_bias = await construct_prompt(user_data, data["category"], question, maxlength, job)
+
+                    
+                    messages[0]["content"] += f"Question: {question}?\n\n"
+
+                    if len(additional)>0:
+                        messages[0]["content"] += f"Additional instructions:\n\n{additional}\n\n"
+                
+                    max_tokens, temperature, presence_penalty = 500, 1.1, 0
+                    prompt = f"{question}?" #prompt to store in DB
+
+                elif data["category"]=="rewrite":
+                    job = int(data["job_id"])
+
+                    text = data["text"]
+                    additional = data["additional"]
+
+                    #prompt must accomodate raw text in input and modified text in output
+                    length_tokens = round(len(text.split())*4/3)+100 #allow extra room  in response for rewrite
+                    margin = 400 #allow for uncounted tokens and fluctuations in token count
+
+                    maxlength = 4097 - length_tokens - len(text.split())*4/3 - len(additional.split())*4/3 - margin #prompt limit 4097 tokens
+                    messages, logit_bias = await construct_prompt(user_data, data["category"], text, maxlength, job)
+
+                    messages[0]["content"] += f"Text:\n\n{text}\n\n"
+
+                    if len(additional)>0:
+                        messages[0]["content"] += f"Additional instructions:\n\n{additional}\n\n"
+
+                    max_tokens, temperature, presence_penalty = length_tokens, 1.0, 0 
+                    #define prompt to be stored in DB
+                    prompt = f"Rewrite: {text[:120]}..."
+
+                elif data["category"]=="idea":
+                    category = data["type"]
+                    topic = data["topic"]
+                
+                    messages = [{
+                        "role": "user", 
+                        "content": f"Generate ideas for {category} about {topic}. Elaborate on each idea by providing specific examples of what content to include.\n"
+                    }]
+
+                    logit_bias = {}
+                    max_tokens, temperature, presence_penalty = 500, 0.3, 0.2
+                    #define prompt to be stored in DB
+                    prompt = f"Generate content ideas for {category} about {topic}"
+                    job = None
+                
+            else:
+                n = 3 #number of options to generate
                 job = int(data["job_id"])
 
                 category = data["type"]
                 topic = data["topic"]
-                additional = data["additional"]
-                length = int(data["length"])
-                search = data["search"]=="true" #bool
-                
-                length_tokens = round(length*4/3)  #one token ~ 3/4 word
-                margin = 400  #allow for uncounted tokens and fluctuations in token count
-
-                if search:
-                    maxlength = 4097 - 450 - length_tokens - len(additional.split())*4/3 - margin #prompt limit 4097 tokens
-
-                    #search web and get user data simultaneously 
-                    search_task = asyncio.create_task(conduct_search(topic))
-                    construct_task = asyncio.create_task(construct_prompt(user, job, maxlength, topic, data["category"]))
-
-                    search_result = await search_task
-                    messages, logit_bias = await construct_task
-
-                    if search_result["result"] != "":
-                        context = search_result["result"]
-                        messages.append({"role": "system", "content": f"You may use following context to write your response. If the context is not relevant you may disregard it. Make sure not to deviate from your persona.\nContext: {context}"})
-
-                else:
-                    search_result = {"result": "", "sources": []}
-
-                    maxlength = 4097 - length_tokens - len(additional.split())*4/3 - margin #prompt limit 4097 tokens
-
-                    messages, logit_bias = await construct_prompt(user, job, maxlength, topic, data["category"])
-
-                messages[0]["content"] += f"\n\nMy prompt: write a {category} about {topic}.\n\n"
-
-                if len(additional)>0:
-                    messages[0]["content"] += f"Additional instructions:\n\n{additional}\n\n"
-
-                max_tokens, temperature, presence_penalty = length_tokens, 1.1, 0.1
-                prompt = f"Write a(n) {category} about {topic}." #prompt to store in DB
-                sources = search_result["sources"]
-
-            if data["category"]=="question":
-                user = data["member_id"]
-                job = int(data["job_id"])
-
-                question = data["question"]
-                additional = data["additional"]
-                search = data["search"]=="true"
-
-                
-                margin = 400  #allow for uncounted tokens and fluctuations in token count
-                if search:
-                    maxlength = 4097 - 450 - len(additional.split())*4/3 - margin #prompt limit for question 2097 tokens - 450 for search result
-
-                    #search web and construct messages simultaneously 
-                    search_task = asyncio.create_task(conduct_search(question))
-                    construct_task = asyncio.create_task(construct_prompt(user, job, maxlength, question, data["category"]))
-                    
-                    search_result = await search_task
-                    messages, logit_bias = await construct_task
-                    
-                    if search_result["result"] != "":
-                        context = search_result["result"]
-                        messages.append({"role": "system", "content": f"You may use following context to answer the question. If the context is not relevant you may disregard it.\n\nContext: {context}"})
-
-                else:
-                    search_result = {"result": "", "sources": []}
-
-                    maxlength = 4097 - len(additional.split())*4/3 - margin #prompt limit 4097 tokens
-
-                    messages, logit_bias = await construct_prompt(user, job, maxlength, question, data["category"])
-
-                
-                messages[0]["content"] += f"Question: {question}?\n\n"
-
-                if len(additional)>0:
-                    messages[0]["content"] += f"Additional instructions:\n\n{additional}\n\n"
-            
-                max_tokens, temperature, presence_penalty = 500, 1.1, 0
-                prompt = f"{question}?" #prompt to store in DB
-                sources = search_result["sources"]
-
-            if data["category"]=="rewrite":
-                user = data["member_id"]
-                job = int(data["job_id"])
 
                 text = data["text"]
-                additional = data["additional"]
 
-                #prompt must accomodate raw text in input and modified text in output
-                length_tokens = round(len(text.split())*4/3)+100 #allow extra room  in response for rewrite
-                margin = 400 #allow for uncounted tokens and fluctuations in token count
+                if data["category"]=="sentence":
+                    length_tokens = 40
+                    margin = 400
+                    maxlength = 4097 - length_tokens - len(text.split())*4/3 - margin #prompt limit 4097 tokens
 
-                maxlength = 4097 - length_tokens - len(text.split())*4/3 - len(additional.split())*4/3 - margin #prompt limit 4097 tokens
-                messages, logit_bias = await construct_prompt(user, job, maxlength, text, data["category"])
+                    messages, logit_bias = await construct_prompt(user_data, "task", topic, maxlength, job)
+                    
+                    if len(text) > 0:
+                        messages += [
+                            {"role": "user", "content": f"My prompt: write a {category} about {topic}\n"},
+                            {"role": "assistant", "content": f"{text}"},
+                            {"role": "user", "content": "Write the next sentence. Do not give any other response, and remember to stay in character.\n"}
+                        ]
+                    else:
+                        ##user may ask to generate the next sentence when text is empty
+                        messages += [
+                            {"role": "user", "content": f"My prompt: write a {category} about {topic}\n"}
+                        ]
+                    max_tokens, temperature, presence_penalty = length_tokens, 1.1, 0
 
-                messages[0]["content"] += f"Text:\n\n{text}\n\n"
+                elif data["category"]=="paragraph":
+                    length_tokens = 120
+                    margin = 400
+                    maxlength = 4097 - length_tokens - len(text.split())*4/3 - margin #prompt limit 4097 tokens
 
-                if len(additional)>0:
-                    messages[0]["content"] += f"Additional instructions:\n\n{additional}\n\n"
+                    messages, logit_bias = await construct_prompt(user_data, "task", topic, maxlength, job)
+                    if len(text) > 0:
+                        messages += [
+                            {"role": "user", "content": f"My prompt: write a {category} about {topic}\n"},
+                            {"role": "assistant", "content": f"{text}"},
+                            {"role": "user", "content": "Write the next paragraph. Do not give any other response. Remember to stay in character.\n"}
+                        ]
+                    else:
+                        messages += [
+                            {"role": "user", "content": f"My prompt: write a {category} about {topic}\n"}
+                        ]
+                    max_tokens, temperature, presence_penalty = length_tokens, 1.1, 0
+                
+                elif data["category"]=="rewrite":
+                    extract = data["extract"] #piece of text to be rewritten
+                    length_tokens = round(len(extract.split())*4/3)+100 #number of tokens allowed in response
 
-                max_tokens, temperature, presence_penalty = length_tokens, 1.0, 0 
-                #define prompt to be stored in DB
-                prompt = f"Rewrite: {text[:120]}..."
-                sources = []
+                    margin = 400
+                    maxlength = 4097 - length_tokens*2 - len(text.split())*4/3 - margin #length_tokens appears twice, once in prompt and in completion
 
-            if data["category"]=="idea":
-                user = data["member_id"]
+                    messages, logit_bias = await construct_prompt(user_data, "rewrite", topic, maxlength, job)
 
-                category = data["type"]
-                topic = data["topic"]
-            
-                messages = [{
-                    "role": "user", 
-                    "content": f"Generate ideas for {category} about {topic}. Elaborate on each idea by providing specific examples of what content to include.\n"
-                }]
+                    messages += [
+                        {"role": "user", "content": f"My prompt: write a {category} about {topic}\n"},
+                        {"role": "assistant", "content": f"{text}"},
+                        {"role": "user", "content": f"Rewrite the following extract from the above text. Do not give any other response, and remember to stay in character.\n'''\n{extract}\n'''\n"}
+                    ]
+                    max_tokens, temperature, presence_penalty = length_tokens, 1.1, 0
 
-                logit_bias = {}
-                max_tokens, temperature, presence_penalty = 500, 0.3, 0.2
-                #define prompt to be stored in DB
-                prompt = f"Generate content ideas for {category} about {topic}"
-                sources = []
-                job = None
 
             attempts = 0
             while attempts<3:
@@ -557,15 +648,17 @@ async def websocket_endpoint(websocket: WebSocket):
                         temperature=temperature,
                         presence_penalty=presence_penalty,
                         logit_bias=logit_bias,
+                        n = n,
                         stream=True
                     )
 
                     message_list = []
                     await websocket.send_json({"message": "[START MESSAGE]"})
                     for chunk in response:
+                        index = chunk["choices"][0].index
                         delta = chunk['choices'][0]['delta']
                         message = str(delta.get('content', ''))
-                        await websocket.send_json({"message": message})
+                        await websocket.send_json({"message": message, "index": index})
                         message_list.append(message) #store messages to add to DB
                                 
                     completion = ''.join(message_list)
@@ -575,19 +668,19 @@ async def websocket_endpoint(websocket: WebSocket):
                     else:
                         score = None
 
-                    if len(sources) > 0:
-                        #send source data back as json
+                    if sources is not None:
                         await websocket.send_json({"message": "[END MESSAGE]", "score": score, "sources": sources})
                     else:
                         await websocket.send_json({"message": "[END MESSAGE]", "score": score})
 
                     break
                 except Exception as e:
-                    print(e)
+                    traceback.print_exc()
                     attempts+=1
-    
-            #store task in DB
-            await store_task(user, data["category"], prompt, completion, score, sources, job)
+
+            if not compose:
+                #store task in DB
+                await store_task(user, data["category"], prompt, completion, score, sources, job)
     except WebSocketDisconnect as e:
         print(f"WebSocket connection closed with code {e.code}")
         pass
@@ -595,118 +688,6 @@ async def websocket_endpoint(websocket: WebSocket):
         print(f"Connection closed with error: {e}")
         pass
     except Exception as e:
-        print(e)
         traceback.print_exc()
-        await websocket.close()
-        pass
-
-@app.websocket("/compose")
-async def websocket_endpoint(websocket: WebSocket):
-    """
-    :param request: sentence, paragraph, or rewrite
-    """
-    await websocket.accept()
-    try:
-        while True:
-            data = await websocket.receive_json()
-            
-            user = data["member_id"]
-            job = int(data["job_id"])
-
-            category = data["type"]
-            topic = data["topic"]
-
-            text = data["text"] 
-
-            if data["request"]=="sentence":
-                length_tokens = 40
-                margin = 400
-                maxlength = 4097 - length_tokens - len(text.split())*4/3 - margin #prompt limit 4097 tokens
-
-                messages, logit_bias = await construct_prompt(user, job, maxlength, topic, category="task")
-                
-                if len(text) > 0:
-                    messages += [
-                        {"role": "user", "content": f"My prompt: write a {category} about {topic}\n"},
-                        {"role": "assistant", "content": f"{text}"},
-                        {"role": "user", "content": "Write the next sentence. Do not give any other response, and remember to stay in character.\n"}
-                    ]
-                else:
-                    ##user may ask to generate the next sentence when text is empty
-                    messages += [
-                        {"role": "user", "content": f"My prompt: write a {category} about {topic}\n"}
-                    ]
-                max_tokens, temperature, presence_penalty = length_tokens, 1.1, 0
-
-            elif data["request"]=="paragraph":
-                length_tokens = 120
-                margin = 400
-                maxlength = 4097 - length_tokens - len(text.split())*4/3 - margin #prompt limit 4097 tokens
-
-                messages, logit_bias = await construct_prompt(user, job, maxlength, topic, category="task")
-                if len(text) > 0:
-                    messages += [
-                        {"role": "user", "content": f"My prompt: write a {category} about {topic}\n"},
-                        {"role": "assistant", "content": f"{text}"},
-                        {"role": "user", "content": "Write the next paragraph. Do not give any other response. Remember to stay in character.\n"}
-                    ]
-                else:
-                    messages += [
-                        {"role": "user", "content": f"My prompt: write a {category} about {topic}\n"}
-                    ]
-                max_tokens, temperature, presence_penalty = length_tokens, 1.1, 0
-            
-            elif data["request"]=="rewrite":
-                extract = data["extract"] #piece of text to be rewritten
-                length_tokens = round(len(extract.split())*4/3)+100 #number of tokens allowed in response
-
-                margin = 400
-                maxlength = 4097 - length_tokens*2 - len(text.split())*4/3 - margin #length_tokens appears twice, once in prompt and in completion
-
-                messages, logit_bias = await construct_prompt(user, job, maxlength, topic, category="rewrite")
-
-                messages += [
-                    {"role": "user", "content": f"My prompt: write a {category} about {topic}\n"},
-                    {"role": "assistant", "content": f"{text}"},
-                    {"role": "user", "content": f"Rewrite the following extract from the above text. Do not give any other response, and remember to stay in character.\n'''\n{extract}\n'''\n"}
-                ]
-                max_tokens, temperature, presence_penalty = length_tokens, 1.1, 0
-
-            n = 3 #number of options to generate
-
-            attempts = 0
-            while attempts < 3:
-                try:
-                    response = openai.ChatCompletion.create(
-                        model="gpt-3.5-turbo",
-                        messages=messages,
-                        max_tokens=max_tokens,
-                        temperature=temperature,
-                        presence_penalty=presence_penalty,
-                        logit_bias = logit_bias,
-                        n = n,
-                        stream=True
-                    )
-
-                    await websocket.send_json({"message": "[START MESSAGE]"})
-                    for chunk in response:
-                        index = chunk["choices"][0].index
-                        delta = chunk["choices"][0].delta
-                        message = str(delta.get('content', ''))
-                        await websocket.send_json({"index": index, "message": message})
-
-                    await websocket.send_json({"message": "[END MESSAGE]"})
-                    break
-                except Exception as e:
-                    attempts += 1
-
-    except WebSocketDisconnect as e:
-        print(f"WebSocket connection closed with code {e.code}")
-        pass
-    except ConnectionClosedError as e:
-        print(f"Connection closed with error: {e}")
-        pass
-    except Exception as e:
-        print(e)
         await websocket.close()
         pass
