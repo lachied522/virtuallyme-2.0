@@ -2,6 +2,7 @@ uvicorn
 fastapi
 websockets
 pydantic
+sqlalchemy
 asyncio
 aiohttp
 openai
