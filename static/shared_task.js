@@ -187,6 +187,6 @@ document.addEventListener("DOMContentLoaded", () => {
     })
 });
 
-const WEB_SOCKET_URL = "wss://virtuallyme2-0.onrender.com/ws"
+const WEB_SOCKET_URL = `wss://virtuallyme2-0.onrender.com/ws/${member}`;
 let isWaiting = false;
 

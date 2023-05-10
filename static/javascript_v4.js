@@ -1884,6 +1884,6 @@ setInterval(() => {
     })
 }, 60000)
 
-const WEB_SOCKET_URL = `wss://virtuallyme2-0.onrender.com/ws/${member}`
+const WEB_SOCKET_URL = `wss://virtuallyme2-0.onrender.com/ws/${member}`;
 const WEB_SERVER_BASE_URL = "https://virtuallyme2-0.onrender.com";
 let isWaiting = false;
