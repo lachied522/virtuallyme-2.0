@@ -1,7 +1,7 @@
 import asyncio
 import json
 import math
-import io
+import os
 import traceback
 from datetime import datetime
 from io import BytesIO
@@ -617,7 +617,6 @@ async def read_files(files: list[UploadFile] = File(...)):
     for file in files:
         contents = await file.read()
         extension = file.filename.split(".")[-1]
-        print(file.file)
         samples.append("") #append new sample
         try:
             if extension == "docx":
