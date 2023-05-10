@@ -148,8 +148,6 @@ function showAlertBanner(msg) {
     })
 
     setTimeout(() => {
-        //show banner for five seconds
-        //banner.querySelector(".alert-banner-close-icon").click();
         banner.animate([
             { maxHeight: '100px', opacity: '1' },
             { maxHeight: '0', opacity: '0' }

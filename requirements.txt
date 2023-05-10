@@ -4,6 +4,8 @@ websockets
 pydantic
 sqlalchemy
 psycopg2
+python-multipart
+apscheduler
 asyncio
 aiohttp
 openai
@@ -11,3 +13,5 @@ tiktoken
 scikit-learn
 beautifulsoup4
 google-api-python-client
+python-docx
+pdfreader

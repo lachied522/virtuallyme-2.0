@@ -1,29 +1,34 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import PlainTextResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.middleware.cors import CORSMiddleware
-from websockets.exceptions import ConnectionClosedError
-from pydantic import BaseModel
-
-from database import User, Job, Task, Source, Data, Session
-
 import asyncio
-import aiohttp
-from bs4 import BeautifulSoup
+import json
+import math
+import io
+import traceback
+from datetime import datetime
+from io import BytesIO
 
+import aiohttp
 import openai
 import tiktoken
+from docx import Document
+from pdfreader import SimplePDFViewer
+from bs4 import BeautifulSoup
 from apiclient.discovery import build
-
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
-import os
-from datetime import datetime
-import json
-import math
+from apscheduler.schedulers.background import BackgroundScheduler
 
-import traceback
+from fastapi import FastAPI, File, UploadFile, WebSocket, WebSocketDisconnect, Depends, Response, status
+from typing import Annotated
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse
+from fastapi.staticfiles import StaticFiles
+from sqlalchemy.orm import Session
+from pydantic import BaseModel
+from websockets.exceptions import ConnectionClosedError
+
+from database import SessionLocal
+import crud, models, schemas
 
 #openai api key
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -43,6 +48,14 @@ enc = tiktoken.get_encoding("cl100k_base")
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
+#creates new db session for each instance
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
 # Add middleware to app
 app.add_middleware(
     CORSMiddleware,
@@ -53,6 +66,9 @@ app.add_middleware(
 )
 
 def turbo_openai_call(messages, max_tokens, temperature=0, presence_penalty=0):
+    """
+    For chat completions with Openai's GPT-3.5-Turbo model. Only allows one response.
+    """
     response = openai.ChatCompletion.create(
         model="gpt-3.5-turbo",
         messages=messages,
@@ -61,6 +77,35 @@ def turbo_openai_call(messages, max_tokens, temperature=0, presence_penalty=0):
         presence_penalty=presence_penalty
     )
     return response["choices"][0]["message"]["content"].strip()
+
+def openai_call(prompts, max_tokens, temperature=0, presence_penalty=0):
+    """
+    For standard completion with Openai's text-davinci model. Allows batching of responses.
+    """
+    responses = []
+    try:
+        model='text-davinci-003'
+        response = openai.Completion.create(
+            model=model,
+            prompt=prompts,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            presence_penalty=presence_penalty,
+            stop=[" Me", " AI:"]
+        )
+    except:
+        model='text-davinci-002'
+        response = openai.Completion.create(
+            model=model,
+            prompt=prompts,
+            max_tokens=temperature,
+            temperature=temperature,
+            presence_penalty=presence_penalty,
+            stop=[" Me", " AI:"]
+        )
+    for choice in response.choices:
+        responses.append(choice.text.strip())
+    return responses
 
 def rank_samples(search_string, samples):
     """
@@ -78,6 +123,9 @@ def rank_samples(search_string, samples):
         cosine_similarities = cosine_similarity(search_tfidf, tfidf_matrix).flatten()
 
         return cosine_similarities
+
+def sort_samples(samples):
+    return list(dict.fromkeys(sorted(samples,key=len,reverse=True)))
 
 async def get_logit_bias(samples):
     '''
@@ -109,43 +157,15 @@ async def get_logit_bias(samples):
     for key, value in tokens_dict.items():
         MAX_BIAS = 7.5
         if value > 0:
-            bias = 3*math.log(1+value)/math.log(1+n_tokens)
+            bias = 5*math.log(1+value)/math.log(1+n_tokens)
             tokens_dict[key] = min(bias, MAX_BIAS)
         else:
-            bias = -3*math.log(1-value)/math.log(1+n_tokens)
+            bias = -5*math.log(1-value)/math.log(1+n_tokens)
             tokens_dict[key] = max(bias, -MAX_BIAS)
 
     sorted_tokens = sorted(tokens_dict.items(), key=lambda x: x[1], reverse=True)
     #return 300 tokens with the highest bias
     return dict(sorted_tokens[:300])
-
-
-async def get_data(member_id):
-    """
-    Get user data from DB. User data is streamed back to client. Data relevant to constructing prompt are stored in memory.
-    """
-    
-    with Session() as session:
-        #preliminary data
-        user = session.query(User.id, User.name, User.description, User.about, User.monthly_words).filter_by(id=member_id).first()
-        user_data = {
-            "name": user.name,
-            "description": user.description,
-            "about": user.about,
-            "words": user.monthly_words
-            }
-        #job data
-        jobs = session.query(Job.id, Job.name, Job.word_count).filter_by(user_id=member_id).all()
-        job_list = []
-        for job in jobs:
-            job_list.append({"job_id": job.id, "name": job.name, "word_count": job.word_count, "data": []})
-            for sample in session.query(Data).filter_by(job_id=job.id).all():
-                job_list[-1]["data"].append({"prompt": sample.prompt, "completion": sample.completion, "feedback": sample.feedback})
-
-    user_data["user"] = job_list
-    
-    return user_data
-
 
 async def construct_prompt(user_data, category, context, maxlength, job=-1):
     """
@@ -173,9 +193,10 @@ async def construct_prompt(user_data, category, context, maxlength, job=-1):
             if job < 0: 
                 #general
                 prompt = f"""My name is {name}. You are an adaptive assistant called Virtually{name}.
-                    I will give you samples of my writing, and then ask you to write something. You have two goals. \
-                    GOAL 1: Employ the same language, tonality, word choice, sentence structure, syntax, semantics, and complexity as present in MY writing. \
-                    GOAL 2: Employ the same reasoning and rationale presented in MY writing to form your opinions."""
+                    I will give you samples of my writing, and then ask you to write something. You have three goals. \
+                    GOAL 1: Employ the same language, tonality, word choice, sentence structure, syntax, and semantics as present in MY writing. \
+                    GOAL 2: Employ the same reasoning and rationale presented in MY writing to form your opinions. \
+                    GOAL 3: Employ a meaningful degree of complexity and variation that is characteristic of a human being."""
                 if description is not None:
                     prompt += f"\nHere is a description of my writing style to help you achieve GOAL 1:\n'''\n{description}\n'''"
                 if about is not None:
@@ -183,9 +204,10 @@ async def construct_prompt(user_data, category, context, maxlength, job=-1):
             else: 
                 #specific
                 prompt = f"""My name is {name}. You are an adaptive assistant called Virtually{name}.
-                    I will give you samples of my writing, and then ask you to write something. You have two goals. \
-                    GOAL 1: Employ the same language, tonality, word choice, sentence structure, syntax, semantics, and complexity as present in MY writing. \
-                    GOAL 2: Employ the same reasoning and rationale presented in MY writing to form your opinions."""
+                    I will give you samples of my writing, and then ask you to write something. You have three goals. \
+                    GOAL 1: Employ the same language, tonality, word choice, sentence structure, syntax, and semantics as present in MY writing. \
+                    GOAL 2: Employ the same reasoning and rationale presented in MY writing to form your opinions.
+                    GOAL 3: Employ a meaningful degree of complexity and variation that is characteristic of a human being."""
                 if description is not None:
                     prompt += f"\nHere is a description of my writing style to help you achieve GOAL 1:\n'''\n{description}\n'''"
                 if about is not None:
@@ -194,7 +216,8 @@ async def construct_prompt(user_data, category, context, maxlength, job=-1):
             if job < 0:
                 #general
                 prompt = f"""My name is {name}. You are an adaptive assistant called Virtually{name}. \
-                I will ask you a question. I want you to give an in-depth and sophisticated answer, while using language that is consistent with mine."""
+                I will ask you a question. I want you to give an in-depth and sophisticated answer, while using language that is consistent with my writing style. \
+                You are capable of forming your own thoughts and opinions."""
                 if description is not None:
                     prompt += f"\nHere is a description of my writing style:\n'''\n{description}\n'''\n"
             else:
@@ -371,6 +394,7 @@ async def conduct_search(query):
                 "content": f"I would like to write about {query}. Using at least 300 words, summarise the relevant points from the following text, using numerical in-text citation with square brackets, e.g. [x], where necessary. Make sure to include any relevant dates, stats, or figures. Text:\n{joined_context}\n"
             }]
             completion = turbo_openai_call(message, 450, 0, 0.4) #300 words ~ 400 tokens, 450 with buffer
+
         else:
             raise Exception("Search returned no results")
 
@@ -382,67 +406,255 @@ async def conduct_search(query):
         return "", []
 
 
-async def store_task(member_id, category, prompt, completion, score=None, sources=[], job_id=None):
-    """
-    :param job_id: job for which task was created
-    """
-    headers = {"member_id": member_id}
-    async with aiohttp.ClientSession(headers=headers) as session:
-        url = f"{DB_BASE_URL}/store_task"
-        data = {
-            "member_id": member_id,
-            "category": category,
-            "prompt": prompt,
-            "completion": completion,
-            "score": score,
-            "sources": sources,
-            "job_id": job_id
-        }
-        async with session.post(url, json=data) as response:
-            return await response.text()
-
-##websearch query
-class Query(BaseModel):
-    query: str
-
-##gpt detector query
-class Subject(BaseModel):
-    text: str
-
-
 @app.get("/")
 async def root():
     return {}
 
-@app.get("/get_user/{member_id}")
-async def get_user(member_id):
-    headers = {
-        "member_id": member_id,
-        "content-type": "application/json"
-    }
-    async with aiohttp.ClientSession(headers=headers) as session:
-        url = f"{DB_BASE_URL}/get_user"
-        async with session.get(url) as response:
-            user = await response.read()
-    return json.loads(user)
+@app.get("/get_user/{member_id}", status_code=200)
+async def get_user(member_id: str, db: Session = Depends(get_db)):
+    return crud.get_user(db, member_id)
 
-@app.post("/search_web")
-async def search_web(query: Query):
-    query_dict = query.dict()
-    result, sources = await conduct_search(str(query_dict["query"]))
+@app.post("/create_user", status_code=200)
+def create_user(new_user: schemas.UserBase, db: Session = Depends(get_db)):
+    """
+    Called when a user signs up. Creates empty user object in DB.
+
+    :param member_id: user's Memberstack ID
+    :param name: user's first name
+    """
+    return crud.create_user(db, new_user)
+
+@app.post("/create_job/{member_id}", status_code=200)
+def create_job(new_job: schemas.Job, member_id: str, db: Session = Depends(get_db)):
+    """
+    Called when a new job is created. Creates Job object in DB.
+
+    :param member_id: user's Memberstack ID
+    :param job_name: job name
+    """
+    return crud.create_job(db, new_job, member_id)
+
+@app.post("/remove_job/{job_id}", status_code=200)
+def remove_job(job_id: str, db: Session = Depends(get_db)):
+    return crud.remove_job(db, job_id)
+
+@app.post("/sync_job/{member_id}", status_code=200)
+def sync_job(new_job: schemas.Job, member_id: str, db: Session = Depends(get_db)):
+    """
+    Called when user makes changes to job. 
+    User jobs influence their writing description and about information.
+    """
+
+    new_samples = [d.completion for d in new_job.data]
+
+    #get existing user data
+    existing_data = crud.get_data(db, member_id)
+    existing_samples = [d["completion"] for job in existing_data["user"] for d in job["data"] if d["completion"] not in new_samples]
+
+    #run description if number of words is at least 300
+    #if a new sample substantially changes the sum of samples
+    all_samples = new_samples + existing_samples
+
+    all_samples_str = str("\n".join(sort_samples(all_samples)))[:8000]
+    existing_samples_str = str("\n".join(sort_samples(existing_samples)))[:8000]
+
+    #only consider first 8,000 characters ~ 2000 words
+    if len(all_samples_str.split()) > 300 and all_samples_str != existing_samples_str:
+        messages = [
+            f"Pretend the following text was written by you.\nText: {all_samples_str}\nGive an elaborate description of your writing style, audience, semantics, syntax. If the language is English, what type of English is it? Speak in first person.\n",
+            f"The following text was written by a human.\nText: {all_samples_str}\nGive an in-depth description of who you believe this person is, including their demographic and likely occupation. What values and beliefs does this person hold? Speak in first person.\n"
+        ]
+        description, about = openai_call(messages, 400, 0.3, 0.1) #standard openai call allows batching
+
+        #update fields
+        crud.update_user_description(db, description, member_id)
+        crud.update_user_about(db, about, member_id)
+
+    #finally, sync job data
+    user = crud.sync_job(db, new_job, member_id)
+
+    return user
+
+@app.post("/store_task/{member_id}", status_code=200)
+def store_task(new_task: schemas.Task, member_id: str, db: Session = Depends(get_db)):
+    return crud.store_task(db, new_task, member_id)
+
+@app.post("/remove_task/{member_id}", status_code=200)
+def remove_task(body: schemas.RemoveTaskRequest, member_id: str, db: Session = Depends(get_db)):
+    completion = body.text
+    return crud.remove_task(db, completion, member_id)
+
+@app.post("/store_feedback/{member_id}", status_code=200)
+def store_feedback(body: schemas.FeedbackRequestBody, member_id: str, db: Session = Depends(get_db)):
+    completion, feedback = body.dict().values()
+    return crud.store_feedback(db, completion=completion, feedback=feedback, member_id=member_id)
+
+@app.post("/share_job/{member_id}")
+async def share_job(body: schemas.ShareRequestBody, member_id: str, db: Session = Depends(get_db)):
+    """
+    Creates dummy user and job for others to use.
+    :param member_id: user's Memberstack ID
+    :param job_id: job to be shared
+    :param description: string, job description
+    :param instructions: string, job instructions
+    :param access: anyone, link, organisation
+    """
+    
+    data = body.dict()
+
+    job_id = data["job_id"]
+    description = data["description"]
+    instructions = data["instructions"]
+    access = data["access"]
+
+    job_schema = schemas.Job(id = job_id)
+
+    #add dummy job to DB
+    dummy_job = crud.share_job(db, job_schema, member_id)
+
+    #send data to Zapier
+    async with aiohttp.ClientSession() as session:
+        url = "https://hooks.zapier.com/hooks/catch/14316057/3yq371j/"
+
+        data = {
+            "id": dummy_job.user_id, #uuid
+            "user_description": "",
+            "name": dummy_job.name,
+            "description": description,
+            "instructions": instructions,
+            "access": access,
+            "member": member_id,
+        }
+        async with session.post(url, json=data) as response:
+            status = response.status
+
+    return status
+
+@app.post("/remove_shared_job/{member_id}")
+async def remove_shared_job(job: schemas.Job, member_id: str, db: Session = Depends(get_db)):
+    """
+    Removes shared job from database.
+    :param member_id: member that job belonds to
+    :param job_id: job to be removed
+    """
+
+    job_id = job.id
+
+    async with aiohttp.ClientSession() as session:
+        url = "https://hooks.zapier.com/hooks/catch/14316057/3budn3o/"
+
+        data = {
+            "member": member_id,
+            "id": job_id
+        }
+        async with session.post(url, json=data) as response:
+            status = response.status
+
+    if status:
+        crud.remove_shared_job(db, job)
+
+    return status
+
+@app.post("/update_user_words/{member_id}", status_code=200)
+def update_user_words(body: schemas.UserWordUpdate, member_id: str, db: Session = Depends(get_db)):
+    value = body.value
+    return crud.update_user_words(db, member_id, value)
+
+def get_data(member_id: str):
+    """
+    Callback function for retrieving user data.
+    """
+    with SessionLocal() as db:
+        return crud.get_data(db, member_id)
+
+def store_new_task(member_id: str, category: str, prompt: str, completion: str, score: int, sources: list, job_id: str):
+    """
+    :param job_id: job for which task was created
+    """
+    task_schema = schemas.Task(user_id=member_id, category=category, prompt=prompt, completion=completion, score=score, sources=sources, job_id=job_id)
+
+    with SessionLocal() as db:
+        return crud.store_task(db, task_schema, member_id)
+
+def sync_tasks():
+    """
+    Callback function for scheduling sync tasks function.
+    """
+    db = SessionLocal() #cannot use Depends in non-route functions
+    crud.sync_tasks(db)
+    print("Tasks synced!")
+    db.close()
+
+def reset_words():
+    """
+    Callback function for scheduling reset words function.
+    """
+    db = SessionLocal() #cannot use Depends in non-route functions
+    crud.reset_words(db)
+    print("Words reset!")
+    db.close()
+
+@app.post("/search_web", status_code=200)
+async def search_web(body: schemas.SearchRequestBody):
+    query = body.query
+    result, sources = await conduct_search(str(query))
     return result
 
-@app.post("/detect")
-async def detect(subject: Subject):
-    document = subject.dict()
-    score = await predict_text(str(document["text"]))
+@app.post("/detect", status_code=200)
+async def detect(body: schemas.DetectRequestBody):
+    text = body.text
+    score = await predict_text(str(text))
     return score
+
+@app.post('/read_files', status_code=200)
+async def read_files(files: list[UploadFile] = File(...)):
+    """
+    reads .docx or .pdf files
+    """
+    MIN_CHARACTERS = 20 #prevent non-meaningful samples
+    MAX_CHARACTERS = 8000
+    samples = []
+    for file in files:
+        contents = await file.read()
+        extension = file.filename.split(".")[-1]
+        print(file.file)
+        samples.append("") #append new sample
+        try:
+            if extension == "docx":
+                doc = Document(BytesIO(contents))
+                for para in doc.paragraphs:
+                    words = para.text.split()
+                    for word in words:
+                        text = samples[-1]
+                        if len(text) + len(word) < MAX_CHARACTERS:
+                            samples[-1] += f"{word} "
+                        else:
+                            samples.append(word)
+
+            elif extension == "pdf":
+                viewer = SimplePDFViewer(contents)
+                for canvas in viewer:
+                    words = ''.join(canvas.strings)
+                    for word in words.split():
+                        text = samples[-1]
+                        if len(text) + len(word) < MAX_CHARACTERS :
+                            samples[-1] += f"{word} "
+                        else:
+                            samples.append(word)
+            else:
+                samples.append(f"Unsupported filetype {extension}")
+            
+        except Exception as e:
+            traceback.print_exc()
+            samples.append(f"Could not read file {file.filename}")
+    
+    return {"texts": [s for s in samples if len(s)>MIN_CHARACTERS]}
 
 @app.websocket("/ws/{user}")
 async def websocket_endpoint(websocket: WebSocket, user: str):
     await websocket.accept()
     #get user data
-    user_data = await get_data(user)
+    user_data = get_data(user)
     await websocket.send_json(user_data)
     try:
         while True:
@@ -490,7 +702,7 @@ async def websocket_endpoint(websocket: WebSocket, user: str):
                     if len(additional)>0:
                         messages[0]["content"] += f"Additional instructions:\n\n{additional}\n\n"
 
-                    max_tokens, temperature, presence_penalty = length_tokens, 1.1, 0.1
+                    max_tokens, temperature, presence_penalty = length_tokens, 1.2, 0
                     prompt = f"Write a(n) {category} about {topic}." #prompt to store in DB
 
                 elif data["category"]=="question":
@@ -599,7 +811,7 @@ async def websocket_endpoint(websocket: WebSocket, user: str):
                     else:
                         ##user may ask to generate the next sentence when text is empty
                         messages += [
-                            {"role": "user", "content": f"My prompt: write a {category} about {topic}\n"}
+                            {"role": "user", "content": f"My prompt: Write the first sentence of a {category} about {topic}\n"}
                         ]
                     max_tokens, temperature, presence_penalty = length_tokens, 1.1, 0
 
@@ -617,7 +829,7 @@ async def websocket_endpoint(websocket: WebSocket, user: str):
                         ]
                     else:
                         messages += [
-                            {"role": "user", "content": f"My prompt: write a {category} about {topic}\n"}
+                            {"role": "user", "content": f"My prompt: Write the first paragraph of a {category} about {topic}\n"}
                         ]
                     max_tokens, temperature, presence_penalty = length_tokens, 1.1, 0
                 
@@ -680,14 +892,28 @@ async def websocket_endpoint(websocket: WebSocket, user: str):
 
             if not compose:
                 #store task in DB
-                await store_task(user, data["category"], prompt, completion, score, sources, job)
+                store_new_task(member_id=user, category=data["category"], prompt=prompt, completion=completion, score=score, sources=sources, job_id=data["job_id"])
+
     except WebSocketDisconnect as e:
         print(f"WebSocket connection closed with code {e.code}")
-        pass
+
     except ConnectionClosedError as e:
         print(f"Connection closed with error: {e}")
-        pass
+
     except Exception as e:
         traceback.print_exc()
         await websocket.close()
-        pass
+
+
+@app.on_event("startup")
+async def startup():
+    print("hi")
+    scheduler = BackgroundScheduler()
+
+    #schedule sync tasks to run at 1AM at start of every day
+    scheduler.add_job(sync_tasks, "interval", start_date='2023-04-16 01:00:00', days=1, timezone="Australia/Sydney")
+
+    #schedule reset words function to execute at end of each month
+    scheduler.add_job(reset_words, "cron", day="last", timezone="Australia/Sydney")
+
+    scheduler.start()
