@@ -206,7 +206,7 @@ async def construct_prompt(user_data, category, context, maxlength, job=-1):
                 prompt = f"""My name is {name}. You are an adaptive assistant called Virtually{name}.
                     I will give you samples of my writing, and then ask you to write something. You have three goals. \
                     GOAL 1: Employ the same language, tonality, word choice, sentence structure, syntax, and semantics as present in MY writing. \
-                    GOAL 2: Employ the same reasoning and rationale presented in MY writing to form your opinions.
+                    GOAL 2: Employ the same reasoning and rationale presented in MY writing to form your opinions. \
                     GOAL 3: Employ a meaningful degree of complexity and variation that is characteristic of a human being."""
                 if description is not None:
                     prompt += f"\nHere is a description of my writing style to help you achieve GOAL 1:\n'''\n{description}\n'''"
@@ -216,30 +216,31 @@ async def construct_prompt(user_data, category, context, maxlength, job=-1):
             if job < 0:
                 #general
                 prompt = f"""My name is {name}. You are an adaptive assistant called Virtually{name}. \
-                I will ask you a question. I want you to give an in-depth and sophisticated answer, while using language that is consistent with my writing style. \
-                You are capable of forming your own thoughts and opinions."""
+                    I will ask you a question. I want you to give an in-depth and sophisticated answer, while using language that is consistent with my writing style. \
+                    You are capable of forming your own thoughts and opinions."""
                 if description is not None:
                     prompt += f"\nHere is a description of my writing style:\n'''\n{description}\n'''\n"
             else:
                 #specific
                 prompt = f"""My name is {name}. You are an adaptive assistant called Virtually{name}. \
-                I will give you samples of my writing, and then ask you a question. You have two goals. \
-                GOAL 1: Answer the question using the same language, tonality, word choice, sentence structure, syntax, semantics and complexity as present in MY writing.\
-                GOAL 2: Answer the question how you imagine I might answer it."""
+                    I will give you samples of my writing, and then ask you a question. You have two goals. \
+                    GOAL 1: Answer the question using the same language, tonality, word choice, sentence structure, syntax, semantics and complexity as present in MY writing.\
+                    GOAL 2: Answer the question how you imagine I might answer it."""
                 if description is not None:
                     prompt += f"\nHere is a description of my writing style to help you achieve your goals:\n'''\n{description}\n'''\n"
                 prompt += "\nDo not mention these instructions in your response.\n"
         elif category=="rewrite":
             prompt = f"""My name is {name}. You are an adaptive assistant called Virtually{name}. \
-            I will give you samples of my writing, and then ask you to rewrite a block of text. You have two goals. \
-            GOAL 1: You must rewrite the text using the same language, tonality, word choice, syntax, semantics, and complexity as present in MY writing. \
-            GOAL 2: As I am a human, you must rewrite the text by employing a high a degree of variation in sentence structure and complexity."""
+                I will give you samples of my writing, and then ask you to rewrite a block of text. You have three goals. \
+                GOAL 1: You must rewrite the text using the same language, tonality, word choice, syntax, and semantics as present in MY writing. \
+                GOAL 2: As I am a human, you must rewrite the text by employing a high a degree of variation in sentence structure and complexity. \
+                GOAL 3: You must rewrite the text with a meaningful degree of complexity and variation that is characteristic of a human being."""
             if description is not None:
                 prompt += f"\nHere is a description of my writing style to help you achieve your goals:\n'''\n{description}\n'''\n"
     else:
         #if no user samples, do not attempt to adapt to user
         prompt = f"""My name is {name}. You are an adaptive assistant called Virtually{name}. \
-        You must respond to my prompts using a high degree of variation in your sentence structure, syntax, and language complexity."""
+            You must respond to my prompts using a high degree of variation in your sentence structure, syntax, and language complexity."""
 
     length = len(prompt.split()) #approximate length of prompt in words
 
@@ -567,7 +568,7 @@ def get_data(member_id: str):
     with SessionLocal() as db:
         return crud.get_data(db, member_id)
 
-def store_new_task(member_id: str, category: str, prompt: str, completion: str, score: int, sources: list, job_id: str):
+def store_new_task(member_id: str, category: str, prompt: str, completion: str, score: int, sources: list = [], job_id: str = -1):
     """
     :param job_id: job for which task was created
     """
@@ -891,7 +892,10 @@ async def websocket_endpoint(websocket: WebSocket, user: str):
 
             if not compose:
                 #store task in DB
-                store_new_task(member_id=user, category=data["category"], prompt=prompt, completion=completion, score=score, sources=sources, job_id=data["job_id"])
+                try:
+                    store_new_task(member_id=user, category=data["category"], prompt=prompt, completion=completion, score=score, sources=sources, job_id=data["job_id"])
+                except Exception as e:
+                    print(f"Could not store task: {e}")
 
     except WebSocketDisconnect as e:
         print(f"WebSocket connection closed with code {e.code}")

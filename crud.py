@@ -177,7 +177,7 @@ def store_task(db: Session, new_task: schemas.Task, member_id: str):
     db.add(task)
 
     if category in ["task", "question"]:
-        if "sources" in new_task.dict():
+        if "sources" in new_task.dict() and new_task.sources is not None:
             db.flush() #flush session to obtain task id
             for source in new_task.sources:
                 db.add(models.Source(url=source.url, display=source.display, title=source.title, preview=source.preview, task_id=task.id))

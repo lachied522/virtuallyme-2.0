@@ -550,9 +550,8 @@ function syncJob(jobElement) {
 
     var job = {
         "user_id": member, 
-        "name": userName, 
-        "job_name": jobElement.querySelector("[customID='job-name']").value, 
-        "job_id": jobElement.getAttribute("jobID")
+        "name": jobElement.querySelector("[customID='job-name']").value, 
+        "id": jobElement.getAttribute("jobID")
     };
     var dataArray = [];
     for(let i = 0; i < samplePrompts.length; i++){
@@ -1100,16 +1099,6 @@ function pageLoad(){
             }
         });
     });
-    //periodically save jobs    
-    setInterval(()=>{
-        document.querySelectorAll("[customID='job-container']").forEach(jobElement => {
-            if(jobElement.hasAttribute("saved")){
-                if(jobElement.getAttribute("saved")==="false"){
-                    syncJob(jobElement);
-                }
-            }
-        })
-    }, 60000)
 }
 
 
@@ -1667,7 +1656,7 @@ function editComposition(module) {
 function removeComposition(module) {
     let text = module.querySelector("[customID='tasks-body']").innerHTML;
     //remove task from DB
-    data = {
+    let data = {
         "text": text
     }
     fetch(`${WEB_SERVER_BASE_URL}/remove_task/${member}`, {
@@ -1866,23 +1855,18 @@ document.addEventListener("DOMContentLoaded", () => {
             form.querySelector("[customInput='text']").scrollIntoView({ behavior: "smooth", block: "center" });
         }
     });
-});
 
-setInterval(() => {
-    //check if job is saved, save if not
-    document.querySelectorAll("[customID='job-container']").forEach((jobElement, index) => {
-        if(jobElement.hasAttribute("saved")){
-            if(jobElement.getAttribute("saved")==="false"){
-                syncJob(jobElement);
+    //periodically save jobs    
+    setInterval(()=>{
+        document.querySelectorAll("[customID='job-container']").forEach(jobElement => {
+            if(jobElement.hasAttribute("saved")){
+                if(jobElement.getAttribute("saved")==="false"){
+                    syncJob(jobElement);
+                }
             }
-        }
-        //update job name
-        let jobTabButton = document.querySelectorAll(".job-tab")[index];
-        if (jobTabButton.innerHTML!=jobElement.querySelector("[customID='job-name']").value) {
-            jobTabButton.innerHTML = jobElement.querySelector("[customID='job-name']").value;
-        }
-    })
-}, 60000)
+        })
+    }, 60000);
+});
 
 const WEB_SOCKET_URL = `wss://virtuallyme2-0.onrender.com/ws/${member}`;
 const WEB_SERVER_BASE_URL = "https://virtuallyme2-0.onrender.com";
