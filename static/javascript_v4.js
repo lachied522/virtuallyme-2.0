@@ -985,7 +985,6 @@ function handleTask(socket, taskWrapper, data) {
 
             if (message==="[SOURCES]" && response.sources.length>0) {
                 sources = response.sources;
-                console.log(sources);
                 sourcesContainer.style.display = "flex"
                 sourcesContainer.querySelectorAll(".source-wrapper").forEach((wrapper, index) => {
                     if(index<response.sources.length){
@@ -1098,7 +1097,7 @@ function submitTask(socket, taskWrapper) {
     }
 
     let form = taskWrapper.querySelector(".task-input");
-    let category = form.name;
+    let category = form.dataset.name;
 
     let data = {
         "member_id": member,
@@ -1235,7 +1234,6 @@ function replaceText(startPos, endPos, text) {
         let data = {
             "text": String(output)
         }
-        console.log(data);
         fetch(url, {
             method: "POST",
             body: JSON.stringify(data),
@@ -1533,7 +1531,6 @@ document.addEventListener("DOMContentLoaded", () => {
     socket = new WebSocket(WEB_SOCKET_URL);
 
     socket.addEventListener("message", function loadData(event) {
-        console.log(typeof event.data);
         storeJobData(JSON.parse(event.data));
         socket.removeEventListener("message", loadData);
     });
