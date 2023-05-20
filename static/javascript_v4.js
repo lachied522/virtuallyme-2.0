@@ -20,11 +20,11 @@ function typeWriter(element, text){
     }, 10)
 }
 
-function waiting(element) {
-    element.textContent = "Thinking";
+function waiting(element, text="Thinking") {
+    element.textContent = text;
     var ellipsis = ". "
-    waitingInterval = setInterval(() => {
-        element.textContent = "Thinking" + ellipsis;
+    return setInterval(() => {
+        element.textContent = text + ellipsis;
         ellipsis += ". "
         if (ellipsis === ". . . . ") {
             ellipsis = ". ";
@@ -271,10 +271,17 @@ function newSample(jobElement, sampleWrapper, completion) {
     let sampleClone = sampleWrapper.parentElement.cloneNode(true);
     sampleClone.querySelector("[customID='sample-prompt-display']").innerHTML = completion.slice(0, 120);
     sampleClone.querySelector("[customID='sample-text']").innerHTML = completion;
+
+    //add dynamic updating
+    sampleClone.querySelector(".text-area.sample").addEventListener("change", () => {
+        editSample(jobElement, sampleClone);
+    });
+
     //add remove button functionality
     sampleClone.querySelector("[customID='remove-button']").addEventListener("click", () => {
         removeSample(jobElement, sampleClone);
     });
+
     //cloneNode does not clone animations, must add back in
     sampleClone.querySelector(".sample-wrapper").addEventListener("click", () => {
         popupOpen(sampleClone.querySelector(".popup-wrapper"));
@@ -296,7 +303,21 @@ function newSample(jobElement, sampleWrapper, completion) {
     return sampleClone
 }
 
-function storeTask(tasksContainer, data){
+function editSample(jobElement, sampleClone) {
+    //update sample display
+    let completion = sampleClone.querySelector(".text-area.sample").value;
+    sampleClone.querySelector("[customID='sample-prompt-display']").innerHTML = completion.slice(0, 120);
+    //show save button
+    jobElement.querySelector("[customID='save-button']").style.display = "flex";
+    jobElement.querySelector("[customID='saving-button']").style.display = "none";
+    jobElement.querySelector("[customID='saved-button']").style.display = "none";
+    //update job words
+    updateJobWords(jobElement);
+    //set saved attribute to false
+    jobElement.setAttribute("saved", "false");
+}
+
+function storeTask(tasksContainer, data) {
     let module = tasksContainer.querySelectorAll(".module")[0];
     let taskClone = module.cloneNode(true);
 
@@ -537,7 +558,6 @@ function storeJobData(data) {
 function syncJob(jobElement) {
     const url = `${WEB_SERVER_BASE_URL}/sync_job/${member}`;
 
-    var samplePrompts = jobElement.querySelectorAll("[customID='sample-prompt']");
     var sampleTexts = jobElement.querySelectorAll("[customID='sample-text']");
 
     let saveButton = jobElement.querySelector("[customID='save-button']");
@@ -553,10 +573,10 @@ function syncJob(jobElement) {
         "name": jobElement.querySelector("[customID='job-name']").value, 
         "id": jobElement.getAttribute("jobID")
     };
+
     var dataArray = [];
-    for(let i = 0; i < samplePrompts.length; i++){
-        var prompt = samplePrompts[i].innerHTML;
-        var text = sampleTexts[i].innerHTML;
+    for (let i = 0; i < sampleTexts.length; i++) {
+        var text = sampleTexts[i].value;
         if(text !== ""){
             var data = {
                 "prompt": prompt,
@@ -621,7 +641,7 @@ function createJob(counter = 0) {
         .then(data => {       
             var newJobElement = newJob(newJobName);
             updateJobWords(newJobElement);
-            newJobElement.setAttribute("jobID", data.job_id);
+            newJobElement.setAttribute("jobID", data.id);
             popupClose(popupWrapper);
             form.reset();
             createButton.style.display = "flex";
@@ -695,9 +715,11 @@ function uploadFiles(jobElement, files) {
                 fileSize += size;
             } else {
                 showAlertBanner(`Please upload ${MAX_FILE_SIZE}MB maximum at a time`);
+                return
             }
         } else {
             showAlertBanner('Please upload .docx or .pdf');
+            return
         }
     }
     //show loading element
@@ -740,6 +762,8 @@ function removeSample(jobElement, sampleWrapper){
     jobElement.querySelector("[customID='saved-button']").style.display = "none";
     //adjust word count
     updateJobWords(jobElement);
+    //set saved attribute to false
+    jobElement.setAttribute("saved", "false");
 }
 
 function removeJob(jobElement){
@@ -822,166 +846,6 @@ function removeSharedJob(id){
     })
 }
 
-function generateIdeas(socket) {
-    if(isWaiting){
-        //if still waiting, do nothing
-        return
-    } else if(userWordCount>userMonthlyWords){
-        document.querySelector("[customID='ideas-output']").textContent = "You have reached your maximum word limit for this month.\n\nUpgrade your plan to increase your limit."
-        return
-    }
-    var form = document.querySelector("[customID='ideas-form']");
-    var typeElement = form.querySelector("[customInput='type']");
-    var topicElement = form.querySelector("[customInput='topic']");
-
-    //check if either typeElement or topic are missing
-    var empty = [];
-    if(typeElement.value===""){
-        empty.push(typeElement);
-    }
-    if(topicElement.value===""){
-        empty.push(topicElement);
-    }
-    const data = {
-        "name": userName,
-        "member_id": member, 
-        "category": "idea",
-        "type": typeElement.value, 
-        "topic": topicElement.value
-    };
-    if(empty.length==0){
-        document.querySelector("[customID='idea-word-count']").innerHTML = `__`;
-        var destination = document.querySelector("[customID='ideas-output']");
-        //bring destination to center of screen
-        destination.scrollIntoView({ behavior: "smooth", block: "center" });
-        waiting(destination);
-        isWaiting = true;
-        socket.addEventListener("message", function receive(event) {
-            let response = JSON.parse(event.data);
-            let data = response.message;
-            if (data==="[START MESSAGE]") {
-                clearInterval(waitingInterval);
-                destination.textContent = "";
-            } else if (data!=="[END MESSAGE]") {
-                destination.textContent += data;
-                destination.scrollTop = destination.scrollHeight;
-            } else {
-                isWaiting = false;
-                this.removeEventListener("message", receive);
-                //update user words
-                var words = destination.textContent.split(" ").length;
-                document.querySelector("[customID='idea-word-count']").innerHTML = `${words}`;
-                updateUserWords(userWordCount+words);
-                //store task
-                var recentIdeasContainer = document.querySelector("#recent-ideas");
-                storeTask(recentIdeasContainer, {"prompt": `Generate content ideas for my ${typeElement.value} about ${topicElement.value}`, "completion": destination.textContent.split()}); 
-                var taskLength = recentIdeasContainer.querySelectorAll(".module").length;
-                if(taskLength-1>5){
-                    recentIdeasContainer.querySelectorAll(".module")[taskLength-1].remove();
-                } 
-            }
-        });
-        socket.addEventListener("close", function handle_close()  {
-            if (isWaiting) {
-                clearInterval(waitingInterval);
-                isWaiting = false;
-                destination.textContent = "There was an error generating your response. Please try again.";
-            }
-            this.removeEventListener("close", handle_close);
-        });
-        socket.send(JSON.stringify(data));
-    } else {
-        var originalColor = empty[0].style.borderColor;
-        empty[0].style.borderColor = "#FFBEC2";
-        setTimeout(function() {
-            empty[0].style.borderColor = originalColor;
-        }, 1500);
-        return
-    }
-}
-
-function submitRewrite(socket) {
-    if(isWaiting){
-        //if still waiting, do nothing
-        return
-    } else if(userWordCount > userMonthlyWords){
-        document.querySelector("[customID='rewrite-output']").textContent = "You have reached your maximum word limit for this month.\n\nUpgrade your plan to increase your limit."
-        return
-    }
-    var form = document.querySelector("[customID='submit-rewrite']");
-    var textElement = form.querySelector("[customInput='text']");
-    //get ID of selected job
-    var jobIndex = form.querySelector("[customID='user-job-list']").selectedIndex-1;
-    if(jobIndex<0||jobIndex>userJobs.length){
-        var jobID = -1
-    } else {
-        var jobID = document.querySelectorAll("[customID='job-container']")[jobIndex].getAttribute("jobID");
-    }
-    var additionalElement = form.querySelector("[customInput='additional']");
-    const data = {
-        "name": userName,
-        "category": "rewrite",
-        "member_id": member,
-        "job_id": jobID,
-        "text": textElement.value, 
-        "additional": additionalElement.value
-    };
-    //check text element is not empty
-    if(textElement.value !== ""){
-        document.querySelector("[customID='rewrite-word-count']").innerHTML = "__";
-        document.querySelector("[customID='rewrite-score']").innerHTML = "";
-        var destination = document.querySelector("[customID='rewrite-output']");
-        //bring destination to center of screen
-        destination.scrollIntoView({ behavior: "smooth", block: "center" });
-        waiting(destination);
-        isWaiting = true;
-        socket.addEventListener("message", function receive(event) {
-            let response = JSON.parse(event.data);
-            let data = response.message;
-            if (data==="[START MESSAGE]") {
-                clearInterval(waitingInterval);
-                destination.textContent = "";
-            } else if (data!=="[END MESSAGE]") {
-                destination.textContent += data;
-                destination.scrollTop = destination.scrollHeight;
-            } else {
-                isWaiting = false;
-                this.removeEventListener("message", receive);
-                //update user words
-                let words = destination.textContent.trim().split(" ").length;
-                document.querySelector("[customID='rewrite-word-count']").innerHTML = `${words}`;
-                //update detection score
-                detectGPT(document.querySelector("[customID='rewrite-score']").parentElement, response.score);
-                //update user words
-                updateUserWords(userWordCount+words);
-                //store task
-                var rewritesContainer = document.querySelector("#recent-rewrites");
-                storeTask(rewritesContainer, {"prompt": `Rewrite: ${textElement.value.slice(0, 120)}...`, "completion": destination.textContent, "score": response.score});
-                var taskLength = rewritesContainer.querySelectorAll(".module").length;
-                if(taskLength-1>5){
-                    rewritesContainer.querySelectorAll(".module")[taskLength-1].remove();
-                } 
-            }
-        });
-        socket.addEventListener("close", function handle_close()  {
-            if (isWaiting) {
-                clearInterval(waitingInterval);
-                isWaiting = false;
-                destination.textContent = "There was an error generating your response. Please try again.";
-            }
-            this.removeEventListener("close", handle_close);
-        });
-        socket.send(JSON.stringify(data));
-    } else {
-        var originalColor = textElement.style.borderColor;
-        textElement.style.borderColor = "#FFBEC2";
-        setTimeout(function() {
-            textElement.style.borderColor = originalColor;
-        }, 1500);
-        return
-    }      
-}
-
 function searchToggle(searchElement) {
     if (searchElement.getAttribute("on")==="true") {
         searchElement.setAttribute("on", "false");
@@ -1050,17 +914,6 @@ function pageLoad(){
         document.querySelector(".feedback-text").style.display = "block";
     });
     
-    //add feedback button functionality for stored tasks
-    document.querySelectorAll(".task-feedback-bar").forEach(element => {
-        element.querySelector("[customID='positive-feedback-button']").addEventListener("click", function() {
-            sendFeedback('positive');
-        })
-    });
-    document.querySelectorAll("[customID='negative-feedback-button']").forEach(element => {
-        element.addEventListener("click", function() {
-            sendFeedback('negative');
-        })
-    });
     document.querySelectorAll("[customID='job-container']").forEach(jobElement => {
         uploadBox = jobElement.querySelector(".upload-sample-box");
         uploadBox.addEventListener('dragover', (e) => {
@@ -1101,263 +954,197 @@ function pageLoad(){
     });
 }
 
+function handleTask(socket, taskWrapper, data) {
+    let waitingInterval = setInterval(() => {}, null); //initialise waiting interval
+    let sources = [];
 
-function submitTask(socket) {
-    if(isWaiting){
-        //if still waiting, do nothing
-        return
-    } else if(userWordCount > userMonthlyWords){
-        document.querySelector("[customID='task-output']").textContent = "You have reached your maximum word limit for this month.\n\nUpgrade your plan to increase your limit."
-        return
-    }
-    var form = document.querySelector("[customID='submit-task']");
-    var typeElement = form.querySelector("[customInput='type']");
-    var topicElement = form.querySelector("[customInput='topic']");
-    var lengthElement = form.querySelector("[customID='output-length']");
-    var searchElement = form.querySelector("[customID='search-toggle']");
-    //get ID of selected job
-    var jobIndex = form.querySelector("[customID='user-job-list']").selectedIndex-1;
-    if(jobIndex<=0||jobIndex>userJobs.length){
-        var jobID = -1
-    } else {
-        var jobID = document.querySelectorAll("[customID='job-container']")[jobIndex].getAttribute("jobID");
-    }
-    //check if either typeElement or topic are missing
-    var empty = [];
-    if(typeElement.value===""){
-        empty.push(typeElement);
-    }
-    if(topicElement.value===""){
-        empty.push(topicElement);
-    }
-    var additionalElement = form.querySelector("[customInput='additional']");
-    const data = {
-        "name": userName,
-        "member_id": member,
-        "category": "task",
-        "job_id": jobID, 
-        "type": typeElement.value, 
-        "topic": topicElement.value, 
-        "additional": additionalElement.value,
-        "length": lengthElement.value,
-        "search": searchElement.getAttribute("on")
-    };
-    //if neither type or topic element is missing
-    if(empty.length==0){
-        document.querySelector("[customID='task-word-count']").innerHTML = "__";
+    let destination = taskWrapper.querySelector(".text-area.task-output");
+    let sourcesContainer = taskWrapper.querySelector(".sources-container");
 
-        var sourcesContainer = document.querySelector("[customID='task-sources-container']");
-        if (data["search"]==="false") {
-            sourcesContainer.style.display = "none";
-        }
-        sourcesContainer.querySelector(".search-error").style.display = "none";
-        document.querySelector("[customID='task-score']").innerHTML = "";
-        var destination = document.querySelector("[customID='task-output']");
-        //bring destination to center of screen
-        destination.scrollIntoView({ behavior: "smooth", block: "center" });
-        //start waiting animation
-        waiting(destination);
-        isWaiting = true;
-        var source_data = [];
-        socket.addEventListener("message", function receive(event) {
+    if (sourcesContainer) {
+        //hide sources container
+        sourcesContainer.style.display = "none";
+        sourcesContainer.querySelector(".search-error").style.display = "none"; //hide search error
+    }
+
+    taskWrapper.querySelector("[customID='word-count']").innerHTML = "__"; //reset word count
+
+    let scoreElement = taskWrapper.querySelector("[customID='score']");
+    if (scoreElement) {
+        //reset score
+        scoreElement.innerHTML = ""; 
+    }
+
+    if (data.search==="true") {
+        //show searching animation
+        var searchingInterval = waiting(destination, text="Searching");
+        //add event listener to handle sources
+        socket.addEventListener("message", function handleSources(event) {
             let response = JSON.parse(event.data);
             let message = response.message;
-            if (message==="[START MESSAGE]") {
-                clearInterval(waitingInterval);
-                destination.textContent = "";
-            } else if (message!=="[END MESSAGE]") {
-                destination.textContent += message;
-                destination.scrollTop = destination.scrollHeight;
-            } else {
-                isWaiting = false;
-                this.removeEventListener("message", receive);
-                //reset feedback bar
-                document.querySelector(".feedback-bar").style.display = "flex";
-                document.querySelector(".feedback-text").style.display = "none";
-                //update user words
-                let words = destination.textContent.trim().split(" ").length;
-                document.querySelector("[customID='task-word-count']").innerHTML = String(words);
-                //update detection score
-                detectGPT(document.querySelector("[customID='task-score']").parentElement, response.score);
-                //show task options buttons
-                document.querySelector(".task-options-buttons").style.display = "flex";
-                //update user words
-                updateUserWords(userWordCount+words);
-                //handle sources
-                const recentTasksContainer = document.querySelector("#recent-tasks");
-                if (data["search"]==="true") {
-                    if (response.hasOwnProperty('sources')) {
-                        const sources = response.sources;
-                        sourcesContainer.style.display = "flex"
-                        sourcesContainer.querySelectorAll(".source-wrapper").forEach((wrapper, index) => {
-                            if(index<response.sources.length){
-                                source_data = response.sources[index];
-                                wrapper.querySelector(".link").innerHTML = source_data.display;
-                                wrapper.querySelector(".source-link").href = source_data.url;
-                                wrapper.querySelector(".source-link").target = "_blank";
-                                wrapper.querySelector(".sources-text.title").innerHTML = source_data.title;
-                                wrapper.querySelector(".sources-text").innerHTML = source_data.preview;
-                                wrapper.style.display = "block";
-                            } else {
-                                wrapper.style.display = "none";
-                            }
-                        });
-                        storeTask(recentTasksContainer, {"prompt": `Write a(n) ${typeElement.value} about ${topicElement.value}`, "completion": destination.textContent, "score": response.score, "sources": sources});
-                    } else {
-                        //error generating search
-                        sourcesContainer.querySelector(".search-error").style.display = "block";
-                        storeTask(recentTasksContainer, {"prompt": `Write a(n) ${typeElement.value} about ${topicElement.value}`, "completion": destination.textContent, "score": response.score, "sources": []});
-                    }                    
-                } else {
-                    storeTask(recentTasksContainer, {"prompt": `Write a(n) ${typeElement.value} about ${topicElement.value}`, "completion": destination.textContent, "score": response.score, "sources": []});
-                }
-                var taskLength = recentTasksContainer.querySelectorAll(".module").length;
-                if(taskLength-1>5){
-                    recentTasksContainer.querySelectorAll(".module")[taskLength-1].remove();
-                } 
-            }
-        });
-        socket.addEventListener("close", function handle_close() {
-            if (isWaiting) {
-                clearInterval(waitingInterval);
-                isWaiting = false;
-                destination.textContent = "There was an error generating your response. Please try again.";
-            }
-            this.removeEventListener("close", handle_close);
-        });
-        socket.send(JSON.stringify(data));
-    } else {
-        var originalColor = empty[0].style.borderColor;
-        empty[0].style.borderColor = "#FFBEC2";
-        setTimeout(function() {
-            empty[0].style.borderColor = originalColor;
-        }, 1500);
-        return
-    }             
-}
 
-function submitQuestion(socket) {
-    if(isWaiting){
-        //if still waiting, do nothing
-        return
-    } else if(userWordCount > userMonthlyWords){
-        document.querySelector("[customID='task-output']").textContent = "You have reached your maximum word limit for this month.\n\nUpgrade your plan to increase your limit."
-        return
-    }
-    var form = document.querySelector("[customID='submit-question']");
-    var questionElement = form.querySelector("[customInput='question']");
-    var searchElement = form.querySelector("[customID='search-toggle']");
-    //get ID of selected job
-    var jobIndex = form.querySelector("[customID='user-job-list']").selectedIndex-1;
-    if(jobIndex<=0||jobIndex>userJobs.length){
-        var jobID = -1
-    } else {
-        var jobID = document.querySelectorAll("[customID='job-container']")[jobIndex].getAttribute("jobID");
-    }
-    //check if either typeElement or topic are missing
-    var empty = [];
-    if(questionElement.value===""){
-        empty.push(questionElement);
-    }
-    var additionalElement = form.querySelector("[customInput='additional']");
-    const data = {
-        "name": userName,
-        "member_id": member,
-        "category": "question",
-        "job_id": jobID, 
-        "question": questionElement.value, 
-        "additional": additionalElement.value,
-        "search": searchElement.getAttribute("on")
-    };
-    //if neither type or topic element is missing
-    if (empty.length==0) {
-        document.querySelector("[customID='question-word-count']").innerHTML = "__";
-        document.querySelector("[customID='question-score']").innerHTML = "";
-
-        var sourcesContainer = document.querySelector("[customID='question-sources-container']");
-        if (data["search"]==="false") {
-            //hide sources container
-            sourcesContainer.style.display = "none";
-        }
-        sourcesContainer.querySelector(".search-error").style.display = "none";
-        var destination = document.querySelector("[customID='question-output']");
-        destination.scrollIntoView({ behavior: "smooth", block: "center" });
-        waiting(destination);
-        isWaiting = true;
-        socket.addEventListener("message", function receive(event) {
-            let response = JSON.parse(event.data);
-            let message = response.message;
-            if (message==="[START MESSAGE]") {
-                clearInterval(waitingInterval);
-                destination.textContent = "";
-            } else if (message!=="[END MESSAGE]") {
-                destination.textContent += message;
-                destination.scrollTop = destination.scrollHeight;
-            } else {
-                isWaiting = false;
-                this.removeEventListener("message", receive);
-                //update user words
-                let words = destination.textContent.trim().split(" ").length;
-                document.querySelector("[customID='question-word-count']").innerHTML = String(words);
-                //update detection score
-                detectGPT(document.querySelector("[customID='question-score']").parentElement, response.score);
-                //update user words
-                updateUserWords(userWordCount+words);
-                //store task
-                var recentQuestionContainer = document.querySelector("#recent-questions");
-                if (data["search"]==="true") {
-                    if (response.hasOwnProperty('sources')) {
-                        //handle sources
-                        const sources = response.sources;
-                        sourcesContainer.style.display = "flex";
-                        sourcesContainer.querySelectorAll(".source-wrapper").forEach((wrapper, index) => {
-                            if (index<response.sources.length) {
-                                let source_data = response.sources[index];
-                                wrapper.querySelector(".link").innerHTML = source_data.display;
-                                wrapper.querySelector(".source-link").href = source_data.url;
-                                wrapper.querySelector(".source-link").target = "_blank";
-                                wrapper.querySelector(".sources-text.title").innerHTML = source_data.title;
-                                wrapper.querySelector(".sources-text").innerHTML = source_data.preview;
-                                wrapper.style.display = "block";
-                            } else {
-                                wrapper.style.display = "none";
-                            }
-                        })
-                        storeTask(recentQuestionContainer, {"prompt": questionElement.value+"?", "completion": destination.textContent, "score": response.score, "sources": sources});
+            if (message==="[SOURCES]" && response.sources.length>0) {
+                sources = response.sources;
+                console.log(sources);
+                sourcesContainer.style.display = "flex"
+                sourcesContainer.querySelectorAll(".source-wrapper").forEach((wrapper, index) => {
+                    if(index<response.sources.length){
+                        source_data = response.sources[index];
+                        wrapper.querySelector(".link").innerHTML = source_data.display;
+                        wrapper.querySelector(".source-link").href = source_data.url;
+                        wrapper.querySelector(".source-link").target = "_blank";
+                        wrapper.querySelector(".sources-text.title").innerHTML = source_data.title;
+                        wrapper.querySelector(".sources-text").innerHTML = source_data.preview;
+                        wrapper.style.display = "block";
                     } else {
-                        //error generating search
-                        sourcesContainer.querySelector(".search-error").style.display = "block";
-                        storeTask(recentQuestionContainer, {"prompt": questionElement.value+"?", "completion": destination.textContent, "score": response.score, "sources": []});
+                        wrapper.style.display = "none";
                     }
-                } else {
-                    storeTask(recentQuestionContainer, {"prompt": questionElement.value+"?", "completion": destination.textContent, "score": response.score, "sources": []});
-                }
-                var taskLength = recentQuestionContainer.querySelectorAll(".module").length;
-                if(taskLength-1>5){
-                    recentQuestionContainer.querySelectorAll(".module")[taskLength-1].remove();
-                } 
+                });
+            } else {
+                //error generating the search
+                sourcesContainer.querySelector(".search-error").style.display = "flex";
             }
+            clearInterval(searchingInterval); //clear searching animation
+            waitingInterval = waiting(destination, text="Thinking"); //show thinking animation
+            this.removeEventListener("message", handleSources);
         });
-        socket.addEventListener("close", function handle_close() {
-            if (isWaiting) {
-                clearInterval(waitingInterval);
-                isWaiting = false;
-                destination.textContent = "There was an error generating your response. Please try again.";
+    } else {
+        //show thinking animation
+        waitingInterval = waiting(destination, text="Thinking");
+    }
+
+    socket.addEventListener("message", function receive(event) {
+        //handle main response
+        let response = JSON.parse(event.data);
+        let message = response.message;
+
+        if (message==="[START MESSAGE]") {
+            //clear thinking animation and empty textarea
+            clearInterval(waitingInterval); 
+            destination.textContent = ""; 
+        } else if (message!=="[END MESSAGE]") {
+            destination.textContent += message;
+            destination.scrollTop = destination.scrollHeight; //scroll textarea down
+        } else {
+            isWaiting = false;
+            this.removeEventListener("message", receive);
+            //reset feedback bar
+            document.querySelector(".feedback-bar").style.display = "flex";
+            document.querySelector(".feedback-text").style.display = "none";
+            //update user words
+            let words = destination.textContent.trim().split(" ").length;
+            taskWrapper.querySelector("[customID='word-count']").innerHTML = String(words);
+            
+            if (scoreElement) {
+                //update detection score
+                detectGPT(scoreElement.parentElement, response.score);
             }
-            this.removeEventListener("close", handle_close);
-        });
-        socket.send(JSON.stringify(data));
+            
+            if (taskWrapper.querySelector(".task-options-buttons")) {
+                //show task quick options buttons
+                taskWrapper.querySelector(".task-options-buttons").style.display = "flex";
+            }
+
+            //update user words
+            updateUserWords(userWordCount+words);
+            //store task
+            let category = data.category;
+            let completion = destination.textContent.trim();
+
+            if (category==="task") {
+                var recentTasksContainer = document.querySelector("#recent-tasks");
+                storeTask(recentTasksContainer, {"prompt": `Write a(n) ${data.type} about ${data.topic}`, "completion": completion, "score": response.score, "sources": sources});
+            } else if (category==="question") {
+                var recentTasksContainer = document.querySelector("#recent-questions");
+                storeTask(recentTasksContainer, {"prompt": `${data.question}?`, "completion": completion, "score": response.score, "sources": sources});
+            } else if (category==="rewrite") {
+                var recentTasksContainer = document.querySelector("#recent-rewrites");
+                storeTask(recentTasksContainer, {"prompt": `Rewrite: ${data.text.slice(0, 120)}...`, "completion": completion, "score": response.score});
+            } else if (category==="idea") {
+                var recentTasksContainer = document.querySelector("#recent-ideas");
+                storeTask(recentTasksContainer, {"prompt": `Generate content ideas for my ${data.type} about ${data.topic}`, "completion": completion}); 
+            }
+
+            //only store 5 recent tasks
+            let taskLength = recentTasksContainer.querySelectorAll(".module").length;
+            if(taskLength-1>5){
+                recentTasksContainer.querySelectorAll(".module")[taskLength-1].remove();
+            } 
+        }
+    });
+    socket.addEventListener("close", function handle_close() {
+        if (isWaiting) {
+            clearInterval(waitingInterval);
+            isWaiting = false;
+            destination.textContent = "There was an error generating your response. Please try again.";
+        }
+        this.removeEventListener("close", handle_close);
+    });
+    //send data to websocket
+    socket.send(JSON.stringify(data));
+
+    destination.scrollIntoView({ behavior: "smooth", block: "center" });
+
+    isWaiting = true;
+}
+
+function submitTask(socket, taskWrapper) {
+    if(isWaiting){
+        //if still waiting, do nothing
+        return
+    } else if(userWordCount > userMonthlyWords){
+        taskWrapper.querySelector(".text-area.task-output").textContent = "You have reached your maximum word limit for this month.\n\nUpgrade your plan to increase your limit."
+        return
+    }
+
+    let form = taskWrapper.querySelector(".task-input");
+    let category = form.name;
+
+    let data = {
+        "member_id": member,
+        "category": category
+    }
+
+    let formData = new FormData(form);
+    let empty = [];
+    for (const [key, value] of formData) {
+        //check if required field is missing
+        if (form.elements[key].required && value==="") {
+            empty.push(form.elements[key]);
+        }
+        //get job_id
+        if (key==="job") {
+            var jobIndex = form.elements[key].selectedIndex-1;
+            if(jobIndex<=0||jobIndex>userJobs.length){
+                var jobID = -1
+            } else {
+                var jobID = document.querySelectorAll("[customID='job-container']")[jobIndex].getAttribute("jobID");
+            }
+            data["job_id"] = jobID;
+        } else {
+            data[key] = value;
+        }
+    }
+
+    //get value of search toggle
+    let searchElement = form.querySelector(".search-toggle");
+    if (searchElement) {
+        data["search"] = searchElement.getAttribute("on");
+    } else {
+        data["search"] = "false";
+    }
+
+    if(empty.length==0){
+        //proceed with task
+        handleTask(socket, taskWrapper, data);
     } else {
         var originalColor = empty[0].style.borderColor;
         empty[0].style.borderColor = "#FFBEC2";
         setTimeout(function() {
             empty[0].style.borderColor = originalColor;
         }, 1500);
-        return
     }             
 }
-
-
 
 function appendText(text) {
     let composeOutput = document.querySelector("[customID='compose-output']");
@@ -1505,6 +1292,7 @@ function compose(socket, category) {
         empty.push(topicElement);
     }
     if (empty.length===0) {
+        isWaiting = true;
         if (category==="rewrite") {
             var extract = window.getSelection().toString(); //piece of text to be rewritten
             if (extract.length===0) {
@@ -1750,32 +1538,14 @@ document.addEventListener("DOMContentLoaded", () => {
         socket.removeEventListener("message", loadData);
     });
 
-
-    let task_array = ["task", "question", "rewrite", "idea"];
     document.querySelectorAll(".task-wrapper").forEach((wrapper, index) => {
         wrapper.querySelector(".generate-button").addEventListener("click", () => {
             if(socket.readyState !== WebSocket.CLOSED){
-                if (task_array[index]==="task") {
-                    submitTask(socket);
-                } else if (task_array[index]==="idea") {
-                    generateIdeas(socket);
-                } else if (task_array[index]==="rewrite") {
-                    submitRewrite(socket);
-                } else if (task_array[index]=="question") {
-                    submitQuestion(socket);
-                }
+                submitTask(socket, wrapper);
             } else {
                 socket = new WebSocket(WEB_SOCKET_URL);
                 socket.addEventListener("open", () => {
-                    if (task_array[index]==="task") {
-                        submitTask(socket);
-                    } else if (task_array[index]==="idea") {
-                        generateIdeas(socket);
-                    } else if (task_array[index]==="rewrite") {
-                        submitRewrite(socket);
-                    } else if (task_array[index]=="question") {
-                        submitQuestion(socket);
-                    }
+                    submitTask(socket, wrapper);
                 });
             }
         })
@@ -1810,6 +1580,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     });
 
+    //compose funcitonality
     document.querySelector("[customID='new-composition']").addEventListener("click", () => {
         let form = document.querySelector("[customID='compose-input']");
         let typeElement = form.querySelector("[customInput='type']");
@@ -1833,7 +1604,9 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     document.querySelector("[customID='compose-save-button']").addEventListener("click", () => {
-        saveComposition();
+        if (!isWaiting) {
+            saveComposition();
+        }
     }); 
 
     document.querySelector("[customID='task-to-compose']").addEventListener("click", () => {

@@ -28,6 +28,7 @@ from pydantic import BaseModel
 from websockets.exceptions import ConnectionClosedError
 
 from database import SessionLocal
+from manager import UserCache, ConnectionManager
 import crud, models, schemas
 
 #openai api key
@@ -40,21 +41,11 @@ GOOGLE_CSE_ID = os.getenv("GOOGLE_CSE_ID")
 
 GPTZERO_API_KEY = os.getenv("GPTZERO_API_KEY")
 
-DB_BASE_URL = os.getenv("DB_BASE_URL")
-
 #tiktoken encoding
 enc = tiktoken.get_encoding("cl100k_base")
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
-
-#creates new db session for each instance
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 # Add middleware to app
 app.add_middleware(
@@ -64,6 +55,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+#creates new db session for each instance
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 def turbo_openai_call(messages, max_tokens, temperature=0, presence_penalty=0):
     """
@@ -98,7 +97,7 @@ def openai_call(prompts, max_tokens, temperature=0, presence_penalty=0):
         response = openai.Completion.create(
             model=model,
             prompt=prompts,
-            max_tokens=temperature,
+            max_tokens=max_tokens,
             temperature=temperature,
             presence_penalty=presence_penalty,
             stop=[" Me", " AI:"]
@@ -155,7 +154,7 @@ async def get_logit_bias(samples):
             n_tokens += 1
     
     for key, value in tokens_dict.items():
-        MAX_BIAS = 7.5
+        MAX_BIAS = 5
         if value > 0:
             bias = 5*math.log(1+value)/math.log(1+n_tokens)
             tokens_dict[key] = min(bias, MAX_BIAS)
@@ -195,6 +194,7 @@ async def construct_prompt(user_data, category, context, maxlength, job=-1):
                 prompt = f"""My name is {name}. You are an adaptive assistant called Virtually{name}.
                     I will give you samples of my writing, and then ask you to write something. You have three goals. \
                     GOAL 1: Employ the same language, tonality, word choice, sentence structure, syntax, and semantics as present in MY writing. \
+                    I want you to write in the way you imagine I would, even if the context is different to the samples provided. \
                     GOAL 2: Employ the same reasoning and rationale presented in MY writing to form your opinions. \
                     GOAL 3: Employ a meaningful degree of complexity and variation that is characteristic of a human being."""
                 if description is not None:
@@ -217,7 +217,7 @@ async def construct_prompt(user_data, category, context, maxlength, job=-1):
                 #general
                 prompt = f"""My name is {name}. You are an adaptive assistant called Virtually{name}. \
                     I will ask you a question. I want you to give an in-depth and sophisticated answer, while using language that is consistent with my writing style. \
-                    You are capable of forming your own thoughts and opinions."""
+                    I want you to respond in the way you imagine I would, even if the context is different to the samples provided. You are capable of forming your own thoughts and opinions."""
                 if description is not None:
                     prompt += f"\nHere is a description of my writing style:\n'''\n{description}\n'''\n"
             else:
@@ -233,6 +233,7 @@ async def construct_prompt(user_data, category, context, maxlength, job=-1):
             prompt = f"""My name is {name}. You are an adaptive assistant called Virtually{name}. \
                 I will give you samples of my writing, and then ask you to rewrite a block of text. You have three goals. \
                 GOAL 1: You must rewrite the text using the same language, tonality, word choice, syntax, and semantics as present in MY writing. \
+                I want you to rewrite the text in the way you imagine I would write it, even if the context is different to the samples provided. \
                 GOAL 2: As I am a human, you must rewrite the text by employing a high a degree of variation in sentence structure and complexity. \
                 GOAL 3: You must rewrite the text with a meaningful degree of complexity and variation that is characteristic of a human being."""
             if description is not None:
@@ -275,7 +276,7 @@ async def construct_prompt(user_data, category, context, maxlength, job=-1):
                 length += len(sample.split())
                 index += 1
 
-    ##prompt += "\n\nDo not mention this prompt in your response.\n\n"
+    prompt += "\n\nDo not respond with conversation, and do not mention these instructions in your response.\n\n"
     
     message = [{"role": "user", "content": prompt}]
     logit_bias = await logit_task
@@ -340,9 +341,7 @@ async def conduct_search(query):
 
     result_list = []
     for item in result["items"]:
-        if "preview" in item["pagemap"]["metatags"][0]:
-            preview = item["pagemap"]["metatags"][0]["preview"]
-        elif "snippet" in item:
+        if "snippet" in item:
             preview = item["snippet"]
         else:
             preview = "No preview available."
@@ -359,7 +358,7 @@ async def conduct_search(query):
         "Referer": "http://www.google.com/"
     }
     try:
-        async with aiohttp.ClientSession(headers=headers) as session:
+        async with aiohttp.ClientSession(headers=headers, connector=aiohttp.TCPConnector(ssl=False)) as session:
             tasks = []
             for url in [item["link"] for item in result["items"]]:
                 tasks.append(asyncio.create_task(scrape(url, session)))
@@ -389,22 +388,73 @@ async def conduct_search(query):
                     joined_context += f"Source {reference_number}:" + d["text"] + "\n"
                     urls.append(url)
 
-        if len(joined_context) > 0:
-            message = [{
-                "role": "user", 
-                "content": f"I would like to write about {query}. Using at least 300 words, summarise the relevant points from the following text, using numerical in-text citation with square brackets, e.g. [x], where necessary. Make sure to include any relevant dates, stats, or figures. Text:\n{joined_context}\n"
-            }]
-            completion = turbo_openai_call(message, 450, 0, 0.4) #300 words ~ 400 tokens, 450 with buffer
-
         else:
             raise Exception("Search returned no results")
 
         sources = [d for d in result_list if d["url"] in list(set(urls))[:5]]
 
-        return completion, sources
+        return joined_context, sources
     except Exception as e:
-        traceback.print_exc()
+        #traceback.print_exc()
         return "", []
+
+async def new_user_description(db: Session, member_id: str, samples_string: str):
+    messages = [
+        f"Pretend the following text was written by you.\nText:\n'''\n{samples_string}\n'''\nGive an elaborate description of your writing style, audience, semantics, syntax. If the language is English, what type of English is it? Speak in first person.\n",
+        f"The following text was written by a human.\nText:\n'''\n{samples_string}\n'''\nGive an in-depth description of who you believe this person is, including their demographic and likely occupation. What values and beliefs does this person hold? Speak in first person.\n"
+    ]
+    description, about = openai_call(messages, 400, 0.3, 0.1) #standard openai call allows batching
+
+    #update fields
+    crud.update_user_description(db, description, member_id)
+    crud.update_user_about(db, about, member_id)
+
+async def summarise(query: str, context: str):
+    message = [{
+        "role": "user", 
+        "content": f"I would like to write about {query}. Using at least 300 words, summarise the relevant points from the following text, using numerical in-text citation with square brackets, e.g. [x], where necessary. \
+        Make sure to include any relevant dates, stats, or figures.\nText:\n'''\n{context}\n'''\n"
+    }]
+    return turbo_openai_call(message, 450, 0, 0.4) #300 words ~ 400 tokens
+
+
+async def streamAIResponse(websocket: WebSocket, messages, logit_bias, max_tokens: int = 1000, temperature: int = 0, presence_penalty: int = 0, n: int = 1):
+    """
+    Streams OpenAI response to client.
+    """
+    attempts = 0 #catch errors communicating with OpenAI
+
+    while attempts<3:
+        try:    
+            response = openai.ChatCompletion.create(
+                model="gpt-3.5-turbo",
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                presence_penalty=presence_penalty,
+                logit_bias=logit_bias,
+                n = n,
+                stream=True
+            )                     
+
+            message_list = []
+            await websocket.send_json({"message": "[START MESSAGE]"})
+            for chunk in response:
+                index = chunk["choices"][0].index
+                delta = chunk['choices'][0]['delta']
+                message = str(delta.get('content', ''))
+                await websocket.send_json({"message": message, "index": index})
+                message_list.append(message) #store messages to add to DB
+                        
+            completion = ''.join(message_list)
+
+            break
+
+        except Exception as e:
+            print(e)
+            attempts+=1
+
+    return completion
 
 
 @app.get("/")
@@ -440,41 +490,51 @@ def remove_job(job_id: str, db: Session = Depends(get_db)):
     return crud.remove_job(db, job_id)
 
 @app.post("/sync_job/{member_id}", status_code=200)
-def sync_job(new_job: schemas.Job, member_id: str, db: Session = Depends(get_db)):
+async def sync_job(job: schemas.Job, member_id: str, db: Session = Depends(get_db)):
     """
     Called when user makes changes to job. 
     User jobs influence their writing description and about information.
     """
+    try:
+        job_id = job.id
+        #extract samples from new data
+        new_samples = [d.completion for d in job.data]
 
-    new_samples = [d.completion for d in new_job.data]
+        #get user data
+        if member_id in cache.active_users:
+            existing_data = cache.get_user_data(member_id)["data"]
+        else:
+            existing_data = crud.get_data(db, member_id)
 
-    #get existing user data
-    existing_data = crud.get_data(db, member_id)
-    existing_samples = [d["completion"] for job in existing_data["user"] for d in job["data"] if d["completion"] not in new_samples]
+        #extract samples from existing data
+        existing_samples = [d["completion"] for job in existing_data["user"] for d in job["data"]]
 
-    #run description if number of words is at least 300
-    #if a new sample substantially changes the sum of samples
-    all_samples = new_samples + existing_samples
+        #run description if number of words is at least 300
+        #and if new data is substantially different to existing data
+        new_samples_str = str("\n".join(sort_samples(new_samples)))
+        existing_samples_str = str("\n".join(sort_samples(existing_samples)))
 
-    all_samples_str = str("\n".join(sort_samples(all_samples)))[:8000]
-    existing_samples_str = str("\n".join(sort_samples(existing_samples)))[:8000]
+        #only consider first 8,000 characters ~ 2000 words
+        #if len(new_samples_str.split()) > 300 and new_samples_str[:1000] != existing_samples_str[:1000]:
+        if True:
+            #TO DO: implement a better way of checking whether data changes substantially
+            asyncio.create_task(new_user_description(db, member_id, new_samples_str[:8000]))
 
-    #only consider first 8,000 characters ~ 2000 words
-    if len(all_samples_str.split()) > 300 and all_samples_str != existing_samples_str:
-        messages = [
-            f"Pretend the following text was written by you.\nText: {all_samples_str}\nGive an elaborate description of your writing style, audience, semantics, syntax. If the language is English, what type of English is it? Speak in first person.\n",
-            f"The following text was written by a human.\nText: {all_samples_str}\nGive an in-depth description of who you believe this person is, including their demographic and likely occupation. What values and beliefs does this person hold? Speak in first person.\n"
-        ]
-        description, about = openai_call(messages, 400, 0.3, 0.1) #standard openai call allows batching
+        #sync job in db
+        job = crud.sync_job(db, job, member_id)
 
-        #update fields
-        crud.update_user_description(db, description, member_id)
-        crud.update_user_about(db, about, member_id)
+        #refresh job data in cache
+        if member_id in cache.active_users:
+            for cached_job in existing_data["user"]:
+                if cached_job["job_id"]==int(job_id):
+                    cached_job.update({"data": [{"completion": d.completion, "feedback": d.feedback} for d in job.data]})
+                    cache.update_user_data(member_id, existing_data)
+                    print("cache updated")
+                    break
 
-    #finally, sync job data
-    user = crud.sync_job(db, new_job, member_id)
+    except Exception as e:
+        traceback.print_exc()
 
-    return user
 
 @app.post("/store_task/{member_id}", status_code=200)
 def store_task(new_task: schemas.Task, member_id: str, db: Session = Depends(get_db)):
@@ -595,11 +655,6 @@ def reset_words():
     print("Words reset!")
     db.close()
 
-@app.post("/search_web", status_code=200)
-async def search_web(body: schemas.SearchRequestBody):
-    query = body.query
-    result, sources = await conduct_search(str(query))
-    return result
 
 @app.post("/detect", status_code=200)
 async def detect(body: schemas.DetectRequestBody):
@@ -650,252 +705,310 @@ async def read_files(files: list[UploadFile] = File(...)):
     
     return {"texts": [s for s in samples if len(s)>MIN_CHARACTERS]}
 
-@app.websocket("/ws/{user}")
-async def websocket_endpoint(websocket: WebSocket, user: str):
-    await websocket.accept()
-    #get user data
-    user_data = get_data(user)
+async def handleTask(user_id: str, websocket: WebSocket, data: dict):
+    try:
+        user_data = cache.get_user_data(user_id)["data"]
+
+        sources = None #initiliase sources variable
+
+        if data["category"]=="task":
+            job = int(data["job_id"])
+
+            category = data["type"]
+            topic = data["topic"]
+            additional = data["additional"]
+            length = int(data["length"])
+            search = data["search"]=="true" #bool
+            
+            length_tokens = round(length*4/3)  #one token ~ 3/4 word
+            margin = 400  #allow for uncounted tokens and fluctuations in token count
+
+            if search:
+                maxlength = 4097 - 450 - length_tokens - len(additional.split())*4/3 - margin #prompt limit 4097 tokens
+
+                #search web and get user data simultaneously 
+                search_task = asyncio.create_task(conduct_search(topic))
+                construct_task = asyncio.create_task(construct_prompt(user_data, data["category"], topic, maxlength, job))
+
+                search_result, sources = await search_task
+                messages, logit_bias = await construct_task
+
+                if search_result != "":
+                    summarise_task = asyncio.create_task(summarise(topic, search_result))
+
+                    await websocket.send_json({"message": "[SOURCES]", "sources": sources}) #send sources to client prior to awaiting summary
+
+                    summary = await summarise_task
+                    ##append search summary
+                    messages[0]["content"] += f"The following was following summarised from a variety of sources on the web. \
+                    You may refer to these sources in your response and use in-text citation where appropriate. If the context is not relevant you may disregard it.\nSummary of search:\n'''\n{summary}\n'''\n"
+
+                else:
+                    await websocket.send_json({"message": "[SOURCES]", "sources": []})
+
+            else:
+                search_result = ""
+
+                maxlength = 4097 - length_tokens - len(additional.split())*4/3 - margin #prompt limit 4097 tokens
+
+                messages, logit_bias = await construct_prompt(user_data, data["category"], topic, maxlength, job)
+
+            messages[0]["content"] += f"\n\nMy prompt: Write a {category} about {topic}.\n\n"
+
+            if len(additional)>0:
+                messages[0]["content"] += f"Additional instructions:\n'''\n{additional}\n'''\n"
+
+            max_tokens, temperature, presence_penalty = length_tokens, 1.2, 0
+            prompt = f"Write a(n) {category} about {topic}." #prompt to store in DB
+
+        elif data["category"]=="question":
+            job = int(data["job_id"])
+
+            question = data["question"]
+            additional = data["additional"]
+            search = data["search"]=="true"
+
+            
+            margin = 400  #allow for uncounted tokens and fluctuations in token count
+            if search:
+                if job > 0:
+                    maxlength = 4097 - 450 - len(additional.split())*4/3 - margin #prompt limit 4097 tokens - 450 for search result
+                else:
+                    maxlength = 0
+                #search web and construct messages simultaneously 
+                search_task = asyncio.create_task(conduct_search(question))
+                construct_task = asyncio.create_task(construct_prompt(user_data, data["category"], question, maxlength, job))
+                
+                search_result, sources = await search_task
+                messages, logit_bias = await construct_task
+
+                if search_result != "":
+                    summarise_task = asyncio.create_task(summarise(question, search_result))
+
+                    await websocket.send_json({"message": "[SOURCES]", "sources": sources}) #send sources to client prior to awaiting summary
+
+                    summary = await summarise_task
+                    ##append search summary
+                    messages[0]["content"] += f"The following was following summarised from a variety of sources on the web. \
+                    You may refer to these sources in your response and use in-text citation where appropriate. If the context is not relevant you may disregard it.\nSummary of search:\n'''\n{summary}\n'''\n"
+
+                else:
+                    await websocket.send_json({"message": "[SOURCES]", "sources": []})
+
+            else:
+                search_result = ""
+
+                if job > 0:
+                    maxlength = 4097  - len(additional.split())*4/3 - margin #prompt limit 4097 tokens
+                else:
+                    maxlength = 0
+
+                messages, logit_bias = await construct_prompt(user_data, data["category"], question, maxlength, job)
+
+            messages[0]["content"] += f"Question: {question}?\n\n"
+
+            if len(additional)>0:
+                messages[0]["content"] += f"Additional instructions:\n'''\n{additional}\n'''\n"
+        
+            max_tokens, temperature, presence_penalty = 500, 1.1, 0
+            prompt = f"{question}?" #prompt to store in DB
+
+        elif data["category"]=="rewrite":
+            job = int(data["job_id"])
+
+            text = data["text"]
+            additional = data["additional"]
+
+            #prompt must accomodate raw text in input and modified text in output
+            length_tokens = round(len(text.split())*4/3)+100 #allow extra room  in response for rewrite
+            margin = 400 #allow for uncounted tokens and fluctuations in token count
+
+            maxlength = 4097 - length_tokens - len(text.split())*4/3 - len(additional.split())*4/3 - margin #prompt limit 4097 tokens
+            messages, logit_bias = await construct_prompt(user_data, data["category"], text, maxlength, job)
+
+            messages[0]["content"] += f"Text:\n\n{text}\n\n"
+
+            if len(additional)>0:
+                messages[0]["content"] += f"Additional instructions:\n'''\n{additional}\n'''\n"
+
+            max_tokens, temperature, presence_penalty = length_tokens, 1.0, 0 
+            #define prompt to be stored in DB
+            prompt = f"Rewrite: {text[:120]}..."
+
+        elif data["category"]=="idea":
+            job = None
+
+            category = data["type"]
+            topic = data["topic"]
+        
+            messages = [{
+                "role": "user", 
+                "content": f"Generate ideas for {category} about {topic}. Elaborate on each idea by providing specific examples of what content to include.\n"
+            }]
+
+            logit_bias = {}
+            max_tokens, temperature, presence_penalty = 500, 0.3, 0.2
+            #define prompt to be stored in DB
+            prompt = f"Generate content ideas for {category} about {topic}"
+
+        n = 1 #number of responses to stream
+        completion = await streamAIResponse(websocket, messages, logit_bias, max_tokens, temperature, presence_penalty, n)
+
+        if data["category"]!="idea":
+            score = await predict_text(completion)
+        else:
+            #ideas are not scored
+            score = None
+
+        await websocket.send_json({"message": "[END MESSAGE]", "score": score}) #send score 
+
+        #store task in DB
+        try:
+            store_new_task(member_id=user_id, category=data["category"], prompt=prompt, completion=completion, score=score, sources=sources, job_id=data["job_id"])
+
+        except Exception as e:
+            print(f"Could not store task: {e}")
+    
+    except asyncio.CancelledError:
+        print(f"Task cancelled")
+    
+    if id(websocket) in active_tasks:
+        del active_tasks[id(websocket)]
+
+async def handleCompose(user_id: str, websocket: WebSocket, data: dict):
+    try:
+        user_data = cache.get_user_data(user_id)["data"]
+
+        job = int(data["job_id"])
+
+        category = data["type"]
+        topic = data["topic"]
+
+        text = data["text"]
+
+        if data["category"]=="sentence":
+            length_tokens = 40
+            margin = 400
+            maxlength = 4097 - length_tokens - len(text.split())*4/3 - margin #prompt limit 4097 tokens
+
+            messages, logit_bias = await construct_prompt(user_data, "task", topic, maxlength, job)
+            
+            if len(text) > 0:
+                messages += [
+                    {"role": "user", "content": f"My prompt: Write a {category} about {topic}\n"},
+                    {"role": "assistant", "content": f"{text}"},
+                    {"role": "user", "content": "Write the next sentence. Remember to stay in character.\n"}
+                ]
+            else:
+                ##user may ask to generate the next sentence when text is empty
+                messages += [
+                    {"role": "user", "content": f"My prompt: Write the first sentence of a {category} about {topic}\n"}
+                ]
+            max_tokens, temperature, presence_penalty = length_tokens, 1.1, 0
+
+        elif data["category"]=="paragraph":
+            length_tokens = 120
+            margin = 400
+            maxlength = 4097 - length_tokens - len(text.split())*4/3 - margin #prompt limit 4097 tokens
+
+            messages, logit_bias = await construct_prompt(user_data, "task", topic, maxlength, job)
+            if len(text) > 0:
+                messages += [
+                    {"role": "user", "content": f"My prompt: Write a {category} about {topic}\n"},
+                    {"role": "assistant", "content": f"{text}"},
+                    {"role": "user", "content": "Write the next paragraph. Remember to stay in character.\n"}
+                ]
+            else:
+                messages += [
+                    {"role": "user", "content": f"My prompt: Write the first paragraph of a {category} about {topic}\n"}
+                ]
+            max_tokens, temperature, presence_penalty = length_tokens, 1.1, 0
+        
+        elif data["category"]=="rewrite":
+            extract = data["extract"] #piece of text to be rewritten
+            length_tokens = round(len(extract.split())*4/3)+100 #number of tokens allowed in response
+
+            margin = 400
+            maxlength = 4097 - length_tokens*2 - len(text.split())*4/3 - margin #length_tokens appears twice, once in prompt and in completion
+
+            messages, logit_bias = await construct_prompt(user_data, "rewrite", topic, maxlength, job)
+
+            messages += [
+                {"role": "user", "content": f"My prompt: write a {category} about {topic}\n"},
+                {"role": "assistant", "content": f"{text}"},
+                {"role": "user", "content": f"Rewrite the following extract from the above text. Remember to stay in character.\n'''\n{extract}\n'''\n"}
+            ]
+            max_tokens, temperature, presence_penalty = length_tokens, 1.1, 0
+
+        n = 3
+        completion = await streamAIResponse(websocket, messages, logit_bias, max_tokens, temperature, presence_penalty, n)
+
+        score = await predict_text(completion)
+
+        await websocket.send_json({"message": "[END MESSAGE]", "score": score}) #send score 
+
+    except asyncio.CancelledError:
+        print(f"Task cancelled")
+    
+    if id(websocket) in active_tasks:
+        del active_tasks[id(websocket)]
+
+
+cache = UserCache() #initialise cache
+manager = ConnectionManager() #initialise connection manager
+
+active_tasks = {}
+
+async def check_connection(user_id: str):
+    """
+    Checks whether use connected after five seconds, and removes data from cache
+    """
+    await asyncio.sleep(5) #wait five seconds
+    user_data = cache.get_user_data(user_id)
+    if user_data and user_data["connection"] not in manager.active_connections:
+        cache.remove_user(user_id)
+
+@app.websocket("/ws/{user_id}")
+async def websocket_endpoint(websocket: WebSocket, user_id: str):
+    await manager.connect(websocket)
+
+    websocket_id = id(websocket)
+
+    #check if user data is in cache
+    if user_id in cache.active_users:
+        user_data = cache.get_user_data(user_id)["data"]
+        cache.update_user_connection(user_id, websocket)
+        print("user in cache")
+    else:
+        user_data = get_data(user_id)
+        cache.new_user(user_id, user_data, websocket)
+        print("cached")
+
     await websocket.send_json(user_data)
+
     try:
         while True:
             data = await websocket.receive_json()
-            sources = None
 
-            compose = "compose" in data.keys()
-            if not compose:
-                n = 1 #number of options to generate
-                if data["category"]=="task":
-                    job = int(data["job_id"])
+            if True:
+                #start new task
+                if "compose" not in data.keys():
+                    task = asyncio.create_task(handleTask(user_id, websocket, data))
 
-                    category = data["type"]
-                    topic = data["topic"]
-                    additional = data["additional"]
-                    length = int(data["length"])
-                    search = data["search"]=="true" #bool
-                    
-                    length_tokens = round(length*4/3)  #one token ~ 3/4 word
-                    margin = 400  #allow for uncounted tokens and fluctuations in token count
+                else:
+                    task = asyncio.create_task(handleCompose(user_id, websocket, data))
 
-                    if search:
-                        maxlength = 4097 - 450 - length_tokens - len(additional.split())*4/3 - margin #prompt limit 4097 tokens
+                active_tasks[websocket_id] = task
 
-                        #search web and get user data simultaneously 
-                        search_task = asyncio.create_task(conduct_search(topic))
-                        construct_task = asyncio.create_task(construct_prompt(user_data, data["category"], topic, maxlength, job))
-
-                        search_result, sources = await search_task
-                        messages, logit_bias = await construct_task
-
-                        if search_result != "":
-                            context = search_result
-                            messages.append({"role": "system", "content": f"You may use following context to write your response. If the context is not relevant you may disregard it. Make sure not to deviate from your persona.\nContext: {context}\n"})
-
-                    else:
-                        search_result = ""
-
-                        maxlength = 4097 - length_tokens - len(additional.split())*4/3 - margin #prompt limit 4097 tokens
-
-                        messages, logit_bias = await construct_prompt(user_data, data["category"], topic, maxlength, job)
-
-                    messages[0]["content"] += f"\n\nMy prompt: write a {category} about {topic}.\n\n"
-
-                    if len(additional)>0:
-                        messages[0]["content"] += f"Additional instructions:\n\n{additional}\n\n"
-
-                    max_tokens, temperature, presence_penalty = length_tokens, 1.2, 0
-                    prompt = f"Write a(n) {category} about {topic}." #prompt to store in DB
-
-                elif data["category"]=="question":
-                    job = int(data["job_id"])
-
-                    question = data["question"]
-                    additional = data["additional"]
-                    search = data["search"]=="true"
-
-                    
-                    margin = 400  #allow for uncounted tokens and fluctuations in token count
-                    if search:
-                        if job > 0:
-                            maxlength = 4097 - 450 - len(additional.split())*4/3 - margin #prompt limit 4097 tokens - 450 for search result
-                        else:
-                            maxlength = 0
-                        #search web and construct messages simultaneously 
-                        search_task = asyncio.create_task(conduct_search(question))
-                        construct_task = asyncio.create_task(construct_prompt(user_data, data["category"], question, maxlength, job))
-                        
-                        search_result, sources = await search_task
-                        messages, logit_bias = await construct_task
-                        
-                        if search_result != "":
-                            context = search_result
-                            messages.append({"role": "system", "content": f"You may use following context to answer the question. If the context is not relevant you may disregard it.\n\nContext: {context}\n"})
-
-                    else:
-                        search_result = ""
-
-                        if job > 0:
-                            maxlength = 4097  - len(additional.split())*4/3 - margin #prompt limit 4097 tokens
-                        else:
-                            maxlength = 0
-
-                        messages, logit_bias = await construct_prompt(user_data, data["category"], question, maxlength, job)
-
-                    
-                    messages[0]["content"] += f"Question: {question}?\n\n"
-
-                    if len(additional)>0:
-                        messages[0]["content"] += f"Additional instructions:\n\n{additional}\n\n"
-                
-                    max_tokens, temperature, presence_penalty = 500, 1.1, 0
-                    prompt = f"{question}?" #prompt to store in DB
-
-                elif data["category"]=="rewrite":
-                    job = int(data["job_id"])
-
-                    text = data["text"]
-                    additional = data["additional"]
-
-                    #prompt must accomodate raw text in input and modified text in output
-                    length_tokens = round(len(text.split())*4/3)+100 #allow extra room  in response for rewrite
-                    margin = 400 #allow for uncounted tokens and fluctuations in token count
-
-                    maxlength = 4097 - length_tokens - len(text.split())*4/3 - len(additional.split())*4/3 - margin #prompt limit 4097 tokens
-                    messages, logit_bias = await construct_prompt(user_data, data["category"], text, maxlength, job)
-
-                    messages[0]["content"] += f"Text:\n\n{text}\n\n"
-
-                    if len(additional)>0:
-                        messages[0]["content"] += f"Additional instructions:\n\n{additional}\n\n"
-
-                    max_tokens, temperature, presence_penalty = length_tokens, 1.0, 0 
-                    #define prompt to be stored in DB
-                    prompt = f"Rewrite: {text[:120]}..."
-
-                elif data["category"]=="idea":
-                    category = data["type"]
-                    topic = data["topic"]
-                
-                    messages = [{
-                        "role": "user", 
-                        "content": f"Generate ideas for {category} about {topic}. Elaborate on each idea by providing specific examples of what content to include.\n"
-                    }]
-
-                    logit_bias = {}
-                    max_tokens, temperature, presence_penalty = 500, 0.3, 0.2
-                    #define prompt to be stored in DB
-                    prompt = f"Generate content ideas for {category} about {topic}"
-                    job = None
-                
             else:
-                n = 3 #number of options to generate
-                job = int(data["job_id"])
-
-                category = data["type"]
-                topic = data["topic"]
-
-                text = data["text"]
-
-                if data["category"]=="sentence":
-                    length_tokens = 40
-                    margin = 400
-                    maxlength = 4097 - length_tokens - len(text.split())*4/3 - margin #prompt limit 4097 tokens
-
-                    messages, logit_bias = await construct_prompt(user_data, "task", topic, maxlength, job)
-                    
-                    if len(text) > 0:
-                        messages += [
-                            {"role": "user", "content": f"My prompt: write a {category} about {topic}\n"},
-                            {"role": "assistant", "content": f"{text}"},
-                            {"role": "user", "content": "Write the next sentence. Do not give any other response, and remember to stay in character.\n"}
-                        ]
-                    else:
-                        ##user may ask to generate the next sentence when text is empty
-                        messages += [
-                            {"role": "user", "content": f"My prompt: Write the first sentence of a {category} about {topic}\n"}
-                        ]
-                    max_tokens, temperature, presence_penalty = length_tokens, 1.1, 0
-
-                elif data["category"]=="paragraph":
-                    length_tokens = 120
-                    margin = 400
-                    maxlength = 4097 - length_tokens - len(text.split())*4/3 - margin #prompt limit 4097 tokens
-
-                    messages, logit_bias = await construct_prompt(user_data, "task", topic, maxlength, job)
-                    if len(text) > 0:
-                        messages += [
-                            {"role": "user", "content": f"My prompt: write a {category} about {topic}\n"},
-                            {"role": "assistant", "content": f"{text}"},
-                            {"role": "user", "content": "Write the next paragraph. Do not give any other response. Remember to stay in character.\n"}
-                        ]
-                    else:
-                        messages += [
-                            {"role": "user", "content": f"My prompt: Write the first paragraph of a {category} about {topic}\n"}
-                        ]
-                    max_tokens, temperature, presence_penalty = length_tokens, 1.1, 0
-                
-                elif data["category"]=="rewrite":
-                    extract = data["extract"] #piece of text to be rewritten
-                    length_tokens = round(len(extract.split())*4/3)+100 #number of tokens allowed in response
-
-                    margin = 400
-                    maxlength = 4097 - length_tokens*2 - len(text.split())*4/3 - margin #length_tokens appears twice, once in prompt and in completion
-
-                    messages, logit_bias = await construct_prompt(user_data, "rewrite", topic, maxlength, job)
-
-                    messages += [
-                        {"role": "user", "content": f"My prompt: write a {category} about {topic}\n"},
-                        {"role": "assistant", "content": f"{text}"},
-                        {"role": "user", "content": f"Rewrite the following extract from the above text. Do not give any other response, and remember to stay in character.\n'''\n{extract}\n'''\n"}
-                    ]
-                    max_tokens, temperature, presence_penalty = length_tokens, 1.1, 0
-
-
-            attempts = 0
-            while attempts<3:
-                try:    
-                    response = openai.ChatCompletion.create(
-                        model="gpt-3.5-turbo",
-                        messages=messages,
-                        max_tokens=max_tokens,
-                        temperature=temperature,
-                        presence_penalty=presence_penalty,
-                        logit_bias=logit_bias,
-                        n = n,
-                        stream=True
-                    )
-
-                    message_list = []
-                    await websocket.send_json({"message": "[START MESSAGE]"})
-                    for chunk in response:
-                        index = chunk["choices"][0].index
-                        delta = chunk['choices'][0]['delta']
-                        message = str(delta.get('content', ''))
-                        await websocket.send_json({"message": message, "index": index})
-                        message_list.append(message) #store messages to add to DB
-                                
-                    completion = ''.join(message_list)
-                    if data["category"]!="idea":
-                        #do not score ideas
-                        score = await predict_text(completion)
-                    else:
-                        score = None
-
-                    if sources is not None:
-                        await websocket.send_json({"message": "[END MESSAGE]", "score": score, "sources": sources})
-                    else:
-                        await websocket.send_json({"message": "[END MESSAGE]", "score": score})
-
-                    break
-                except Exception as e:
-                    traceback.print_exc()
-                    attempts+=1
-
-            if not compose:
-                #store task in DB
-                try:
-                    store_new_task(member_id=user, category=data["category"], prompt=prompt, completion=completion, score=score, sources=sources, job_id=data["job_id"])
-                except Exception as e:
-                    print(f"Could not store task: {e}")
+                #cancel task
+                if websocket_id in active_tasks:
+                    task = active_tasks[websocket_id]
+                    task.cancel()
+                    await task
+                    websocket.send_json({"message": "[END MESSAGE]", "score": -1})
+                else:
+                    print("no active task")
 
     except WebSocketDisconnect as e:
         print(f"WebSocket connection closed with code {e.code}")
@@ -904,13 +1017,20 @@ async def websocket_endpoint(websocket: WebSocket, user: str):
         print(f"Connection closed with error: {e}")
 
     except Exception as e:
-        traceback.print_exc()
-        await websocket.close()
+        print(e)
+        await websocket.close() #force close connection
+        
+    if websocket_id in active_tasks:
+        task = active_tasks[websocket_id]
+        task.cancel()
+        
+    await manager.disconnect(websocket)
+    
+    asyncio.create_task(check_connection(user_id)) #creates background task to remove data from cache after five seconds
 
 
 @app.on_event("startup")
 async def startup():
-    print("hi")
     scheduler = BackgroundScheduler()
 
     #schedule sync tasks to run at 1AM at start of every day

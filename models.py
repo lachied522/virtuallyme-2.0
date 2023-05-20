@@ -49,7 +49,6 @@ class Source(Base):
 class Data(Base):
     __tablename__ = 'data'
     id = Column(Integer, primary_key=True)
-    prompt = Column(Text)
     completion = Column(Text)
     feedback = Column(String(100)) #user-upload, positive, or negative
     job_id = Column(Integer, ForeignKey('job.id'))

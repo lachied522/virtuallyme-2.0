@@ -78,7 +78,7 @@ def get_data(db: Session, member_id: str):
     for job in jobs:
         job_list.append({"job_id": job.id, "name": job.name, "word_count": job.word_count, "data": []})
         for sample in db.query(models.Data).filter_by(job_id=job.id).all():
-            job_list[-1]["data"].append({"prompt": sample.prompt, "completion": sample.completion, "feedback": sample.feedback})
+            job_list[-1]["data"].append({"completion": sample.completion, "feedback": sample.feedback})
 
     user_data["user"] = job_list
     
@@ -110,12 +110,13 @@ def remove_job(db: Session, job_id: str):
     try:
         job = db.query(models.Job).filter_by(id=job_id).first()
         
-        for d in job.data:
-            db.delete(d)
+        if job:
+            for d in job.data:
+                db.delete(d)
         
-        db.delete(job)
+            db.delete(job)
 
-        db.commit()
+            db.commit()
 
     except Exception as e:
         print(e)
@@ -143,19 +144,20 @@ def sync_job(db: Session, new_job: schemas.Job, member_id: str):
 
         word_count = 0
         for data in new_job.data:
-            prompt = data.prompt
             completion = data.completion
-            db.add(models.Data(prompt=prompt, completion=completion, feedback="user-upload", job_id=job.id))
+            db.add(models.Data(completion=completion, feedback="user-upload", job_id=job.id))
             word_count += len(completion.split())
 
         job.word_count = word_count
 
+        db.commit()
+        db.refresh(job)
+        return job
+
     except Exception as e:
         print(e)
     
-    db.commit()
-    db.refresh(job)
-    return job
+
 
 def store_task(db: Session, new_task: schemas.Task, member_id: str):
     """
@@ -225,7 +227,7 @@ def store_feedback(db: Session, completion: str, feedback: str, member_id: str):
                     if job_id>0:
                         #create new data record in DB
                         prompt = task.prompt
-                        db.add(models.Data(prompt=prompt, completion=completion, feedback=feedback, job_id=job_id))
+                        db.add(models.Data(completion=completion, feedback=feedback, job_id=job_id))
 
             db.commit()
             db.refresh(task)  
@@ -253,7 +255,7 @@ def share_job(db: Session, job: schemas.Job, member_id: str):
     db.flush()
 
     for d in job.data:
-        db.add(models.Data(prompt=d.prompt, completion=d.completion, feedback="user-upload", job_id=dummy_job.id))
+        db.add(models.Data(completion=d.completion, feedback="user-upload", job_id=dummy_job.id))
 
     db.commit()
     db.refresh(dummy_job)

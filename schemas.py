@@ -9,7 +9,6 @@ from pydantic import BaseModel
 
 class Data(BaseModel):
     id: Optional[int]
-    prompt: str
     completion: str
     feedback: Optional[str] = None #user-upload, positive, or negative
     job_id: Optional[str]
