@@ -31,11 +31,9 @@ from database import SessionLocal
 from manager import UserCache, ConnectionManager
 import crud, models, schemas
 
-#openai api key
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 openai.api_key = OPENAI_API_KEY 
 
-#google api key
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 GOOGLE_CSE_ID = os.getenv("GOOGLE_CSE_ID")
 
@@ -475,19 +473,49 @@ def create_user(new_user: schemas.UserBase, db: Session = Depends(get_db)):
     """
     return crud.create_user(db, new_user)
 
-@app.post("/create_job/{member_id}", status_code=200)
-def create_job(new_job: schemas.Job, member_id: str, db: Session = Depends(get_db)):
+@app.post("/create_job/{user_id}", status_code=200)
+def create_job(new_job: schemas.Job, user_id: str, db: Session = Depends(get_db)):
     """
     Called when a new job is created. Creates Job object in DB.
 
     :param member_id: user's Memberstack ID
     :param job_name: job name
     """
-    return crud.create_job(db, new_job, member_id)
+    try:
+        new_job = crud.create_job(db, new_job, user_id) #create job in DB and return job id
+        
+        if user_id in cache.active_users:
+            #add new job to cache
+            existing_data = cache.get_user_data(user_id)["data"]
+            existing_data["user"].append({"job_id": new_job.id, "name": new_job.name, "word_count": 0, "data": []})
+            cache.update_user_data(user_id, existing_data) 
+
+        return new_job
+    except Exception as e:
+        print(f"Could not create new job: ${e}")
+
 
 @app.post("/remove_job/{job_id}", status_code=200)
-def remove_job(job_id: str, db: Session = Depends(get_db)):
-    return crud.remove_job(db, job_id)
+def remove_job(job: schemas.Job, job_id: str, db: Session = Depends(get_db)):
+    """
+    Deletes job and associated data
+    """
+    try:
+        user_id = job.user_id
+        crud.remove_job(db, job_id) #remove job from db
+
+        if user_id in cache.active_users:
+            existing_data = cache.get_user_data(user_id)["data"]
+            for index, cached_job in enumerate(existing_data["user"]):
+                #remove job from cache
+                if cached_job["job_id"] == int(job_id):
+                    existing_data["user"].pop(index)
+                    cache.update_user_data(user_id, existing_data) 
+                    break
+            
+    except Exception as e:
+        print(f"Could not remove job: ${e}")
+
 
 @app.post("/sync_job/{member_id}", status_code=200)
 async def sync_job(job: schemas.Job, member_id: str, db: Session = Depends(get_db)):
@@ -529,7 +557,6 @@ async def sync_job(job: schemas.Job, member_id: str, db: Session = Depends(get_d
                 if cached_job["job_id"]==int(job_id):
                     cached_job.update({"data": [{"completion": d.completion, "feedback": d.feedback} for d in job.data]})
                     cache.update_user_data(member_id, existing_data)
-                    print("cache updated")
                     break
 
     except Exception as e:
@@ -978,11 +1005,10 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
     if user_id in cache.active_users:
         user_data = cache.get_user_data(user_id)["data"]
         cache.update_user_connection(user_id, websocket)
-        print("user in cache")
+
     else:
         user_data = get_data(user_id)
         cache.new_user(user_id, user_data, websocket)
-        print("cached")
 
     await websocket.send_json(user_data)
 

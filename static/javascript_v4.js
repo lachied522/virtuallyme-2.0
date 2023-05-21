@@ -579,7 +579,6 @@ function syncJob(jobElement) {
         var text = sampleTexts[i].value;
         if(text !== ""){
             var data = {
-                "prompt": prompt,
                 "completion": text
             }
             dataArray.push(data);
@@ -588,7 +587,7 @@ function syncJob(jobElement) {
     job["data"]=dataArray;
     fetch(url, {
         method: "POST",
-        job: JSON.stringify(job),
+        body: JSON.stringify(job),
         headers: {
             "Content-Type": "application/json"
         },
@@ -769,7 +768,10 @@ function removeSample(jobElement, sampleWrapper){
 function removeJob(jobElement){
     const job_id = jobElement.getAttribute("jobID");
     const url = `${WEB_SERVER_BASE_URL}/remove_job/${job_id}`;
-    var body = {};
+    let body = {
+        "user_id": member,
+        "job_id": job_id
+    };
     fetch(url, {
         method: "POST",
         body: JSON.stringify(body),
