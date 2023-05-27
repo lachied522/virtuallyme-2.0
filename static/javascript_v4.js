@@ -955,7 +955,7 @@ function pageLoad(){
 }
 
 function handleTask(socket, taskWrapper, data) {
-    let waitingInterval = setInterval(() => {}, null); //initialise waiting interval
+    let waitingInterval; //initialise waiting interval
     let sources = [];
 
     let destination = taskWrapper.querySelector(".text-area.task-output");
@@ -1018,8 +1018,9 @@ function handleTask(socket, taskWrapper, data) {
         let message = response.message;
 
         if (message==="[START MESSAGE]") {
-            //clear thinking animation and empty textarea
+            //clear waiting interval and empty textarea
             clearInterval(waitingInterval); 
+            waitingInterval = undefined;
             destination.textContent = "";
         } else if (message==="[SOURCES]") {
             //pass

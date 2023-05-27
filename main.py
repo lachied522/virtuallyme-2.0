@@ -790,7 +790,7 @@ async def handleTask(user_id: str, websocket: WebSocket, data: dict):
                     summary = await summarise_task
                     ##append search summary
                     messages[0]["content"] += f"The following was following summarised from a variety of sources on the web. Sources are indicated by numbers in square brackets, e.g. [x].\
-                    You may refer to these sources in your response and use in-text citation where appropriate. If the context is not relevant you may disregard it.\nSummary of search:\n'''\n{summary}\n'''\n"
+                    You may refer to these sources in your response and use square brackets to reference where appropriate. If the context is not relevant you may disregard it.\nSummary of search:\n'''\n{summary}\n'''\n"
 
                 else:
                     await websocket.send_json({"message": "[SOURCES]", "sources": []})
@@ -839,7 +839,7 @@ async def handleTask(user_id: str, websocket: WebSocket, data: dict):
                     summary = await summarise_task
                     ##append search summary
                     messages[0]["content"] += f"The following was following summarised from a variety of sources from the web. Sources are indicated by numbers in square brackets, e.g. [x]. \
-                    You may refer to these sources in your response and use in-text citation where appropriate. If the context is not relevant you may disregard it.\nSummary of search:\n'''\n{summary}\n'''\n"
+                    You may refer to these sources in your response and use square brackets to reference where appropriate. If the context is not relevant you may disregard it.\nSummary of search:\n'''\n{summary}\n'''\n"
 
                 else:
                     await websocket.send_json({"message": "[SOURCES]", "sources": []})
