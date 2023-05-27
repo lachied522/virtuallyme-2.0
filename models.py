@@ -52,9 +52,3 @@ class Data(Base):
     completion = Column(Text)
     feedback = Column(String(100)) #user-upload, positive, or negative
     job_id = Column(Integer, ForeignKey('job.id'))
-
-class Organisation(Base):
-    __tablename__ = 'organisation'
-    id = Column(Integer, primary_key=True)
-    name = Column(String(100))
-    user = relationship('User', back_populates='organisation')
