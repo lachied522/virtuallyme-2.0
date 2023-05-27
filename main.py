@@ -62,18 +62,38 @@ def get_db():
     finally:
         db.close()
 
-def turbo_openai_call(messages, max_tokens, temperature=0, presence_penalty=0):
+async def turbo_openai_call(messages, max_tokens, temperature=0, presence_penalty=0):
     """
-    For chat completions with Openai's GPT-3.5-Turbo model. Only allows one response.
+    For chat completions with Openai's GPT-3.5-Turbo model. Does not allow batching.
     """
-    response = openai.ChatCompletion.create(
-        model="gpt-3.5-turbo",
-        messages=messages,
-        max_tokens=max_tokens,
-        temperature=temperature,
-        presence_penalty=presence_penalty
-    )
-    return response["choices"][0]["message"]["content"].strip()
+    attempts = 0 #catch errors communicating with OpenAI
+    
+    while attempts < 3:
+        try:
+            response = openai.ChatCompletion.create(
+                model="gpt-3.5-turbo",
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                presence_penalty=presence_penalty,
+                stream = True
+            )
+
+            message_list = []
+            for chunk in response:
+                delta = chunk['choices'][0]['delta']
+                message = str(delta.get('content', ''))
+                message_list.append(message)
+                await asyncio.sleep(0) #yield control in case of cancel request
+
+            completion = ''.join(message_list)
+
+            break
+
+        except:
+            attempts += 1
+
+    return completion
 
 def openai_call(prompts, max_tokens, temperature=0, presence_penalty=0):
     """
@@ -374,8 +394,8 @@ async def conduct_search(query):
                 #only want to include five sources
                 break
             elif len(joined_context)+len(d["text"]) > 8000:
-                ##prompt limit 3097 tokens (4097-1000 for completion)
-                ##1000 tokens ~ 750 words
+                #prompt limit 3097 tokens (4097-1000 for completion)
+                #1000 tokens ~ 750 words
                 break
             else:
                 if urls.count(url) < 10:
@@ -413,7 +433,8 @@ async def summarise(query: str, context: str):
         "content": f"I would like to write about {query}. Using at least 300 words, summarise the relevant points from the following text, using numerical in-text citation with square brackets, e.g. [x], where necessary. \
         Make sure to include any relevant dates, stats, or figures.\nText:\n'''\n{context}\n'''\n"
     }]
-    return turbo_openai_call(message, 450, 0, 0.4) #300 words ~ 400 tokens
+    completion = await turbo_openai_call(message, 450, 0, 0.4) #300 words ~ 400 tokens
+    return completion
 
 
 async def streamAIResponse(websocket: WebSocket, messages, logit_bias, max_tokens: int = 1000, temperature: int = 0, presence_penalty: int = 0, n: int = 1):
@@ -443,6 +464,7 @@ async def streamAIResponse(websocket: WebSocket, messages, logit_bias, max_token
                 message = str(delta.get('content', ''))
                 await websocket.send_json({"message": message, "index": index})
                 message_list.append(message) #store messages to add to DB
+                await asyncio.sleep(0) #yield control in case of cancel request
                         
             completion = ''.join(message_list)
 
@@ -767,7 +789,7 @@ async def handleTask(user_id: str, websocket: WebSocket, data: dict):
 
                     summary = await summarise_task
                     ##append search summary
-                    messages[0]["content"] += f"The following was following summarised from a variety of sources on the web. \
+                    messages[0]["content"] += f"The following was following summarised from a variety of sources on the web. Sources are indicated by numbers in square brackets, e.g. [x].\
                     You may refer to these sources in your response and use in-text citation where appropriate. If the context is not relevant you may disregard it.\nSummary of search:\n'''\n{summary}\n'''\n"
 
                 else:
@@ -816,7 +838,7 @@ async def handleTask(user_id: str, websocket: WebSocket, data: dict):
 
                     summary = await summarise_task
                     ##append search summary
-                    messages[0]["content"] += f"The following was following summarised from a variety of sources on the web. \
+                    messages[0]["content"] += f"The following was following summarised from a variety of sources from the web. Sources are indicated by numbers in square brackets, e.g. [x]. \
                     You may refer to these sources in your response and use in-text citation where appropriate. If the context is not relevant you may disregard it.\nSummary of search:\n'''\n{summary}\n'''\n"
 
                 else:
@@ -1016,7 +1038,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
         while True:
             data = await websocket.receive_json()
 
-            if True:
+            if "CANCEL" not in data:
                 #start new task
                 if "compose" not in data.keys():
                     task = asyncio.create_task(handleTask(user_id, websocket, data))
@@ -1027,14 +1049,14 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
                 active_tasks[websocket_id] = task
 
             else:
-                #cancel task
+                #cancel active task
                 if websocket_id in active_tasks:
                     task = active_tasks[websocket_id]
                     task.cancel()
                     await task
-                    websocket.send_json({"message": "[END MESSAGE]", "score": -1})
+                    await websocket.send_json({"message": "[CANCELLED BY USER]", "score": -1})
                 else:
-                    print("no active task")
+                    pass
 
     except WebSocketDisconnect as e:
         print(f"WebSocket connection closed with code {e.code}")

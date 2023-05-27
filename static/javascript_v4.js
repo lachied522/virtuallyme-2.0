@@ -96,7 +96,6 @@ function removeSampleConfirm(sampleWrapper){
     sampleWrapper.querySelector(".text-200").style.display = 'block';
 }
 
-
 function featuresTaskOpen(module){
   bodyContainer = module.querySelector(".features-tasks-body-container");
   dropdownArrow = module.querySelector(".dropdown-wrapper");
@@ -190,7 +189,6 @@ function detectGPT(container, score){
         container.style.display = "flex"; //display the container
     }
 }
-
 
 function updateJobWords(jobElement){
     let allSamples = jobElement.querySelectorAll("[customID='sample-text']");
@@ -1022,12 +1020,46 @@ function handleTask(socket, taskWrapper, data) {
         if (message==="[START MESSAGE]") {
             //clear thinking animation and empty textarea
             clearInterval(waitingInterval); 
-            destination.textContent = ""; 
+            destination.textContent = "";
+        } else if (message==="[SOURCES]") {
+            //pass
+        } else if (message==="[CANCELLED BY USER]") {
+            //hide cancel button
+            document.querySelector(".waiting-wrapper").classList.toggle("show"); 
+            //show NA detection score
+            detectGPT(scoreElement.parentElement, -1);
+            //remove event listener
+            this.removeEventListener("message", receive);
+
+            if (waitingInterval) {
+                //response was not yet recieved
+                destination.textContent = "";
+            } else {
+                //partial response has been received
+                //update user word count
+                let words = destination.textContent.trim().split(" ").length;
+                fetch(`${WEB_SERVER_BASE_URL}/update_user_words/${member}`, {
+                    method: "POST",
+                    body: JSON.stringify({"value": words}),
+                    headers: {
+                        "Content-Type": "application/json"
+                    }
+                })
+                .then(response => {
+                    updateUserWords(userWordCount+words);
+                })
+            }
+            //clear waiting interval
+            clearInterval(waitingInterval);
+            isWaiting = false;
         } else if (message!=="[END MESSAGE]") {
             destination.textContent += message;
             destination.scrollTop = destination.scrollHeight; //scroll textarea down
         } else {
             isWaiting = false;
+            //hide cancel task button
+            document.querySelector(".waiting-wrapper").classList.toggle("show");
+            
             this.removeEventListener("message", receive);
             //reset feedback bar
             document.querySelector(".feedback-bar").style.display = "flex";
@@ -1081,9 +1113,15 @@ function handleTask(socket, taskWrapper, data) {
         }
         this.removeEventListener("close", handle_close);
     });
+
+    //add cancel event listener
+    document.querySelector(".waiting-popup").addEventListener("click", () => {
+        socket.send(JSON.stringify({"CANCEL": "[CANCEL TASK]"}));
+    });
+
     //send data to websocket
     socket.send(JSON.stringify(data));
-
+    //scroll output textarea into view
     destination.scrollIntoView({ behavior: "smooth", block: "center" });
 
     isWaiting = true;
@@ -1138,6 +1176,8 @@ function submitTask(socket, taskWrapper) {
     if(empty.length==0){
         //proceed with task
         handleTask(socket, taskWrapper, data);
+        //show cancel task option
+        document.querySelector(".waiting-wrapper").classList.toggle("show");
     } else {
         var originalColor = empty[0].style.borderColor;
         empty[0].style.borderColor = "#FFBEC2";
@@ -1262,7 +1302,6 @@ function replaceText(startPos, endPos, text) {
     });
 }
 
-
 function compose(socket, category) {
     if (isWaiting) {
         //if still waiting, do nothing
@@ -1352,6 +1391,10 @@ function compose(socket, category) {
                 optionsContainers.forEach((option, index) => {
                     option.innerHTML = "";
                 });
+            } else if (data==="[CANCELLED BY USER]") {
+                isWaiting = false;
+                document.querySelector(".waiting-wrapper").classList.toggle("show"); //hide cancel button
+                this.removeEventListener("message", receive);
             } else if (data!=="[END MESSAGE]") {
                 let index = response.index;
                 optionsContainers[index].innerHTML += data;
@@ -1371,6 +1414,12 @@ function compose(socket, category) {
                 });
             }
         });
+
+        //add cancel event listener
+        document.querySelector(".waiting-popup").addEventListener("click", () => {
+            socket.send(JSON.stringify({"CANCEL": "[CANCEL TASK]"}));
+        });
+
         socket.send(JSON.stringify(data));
     } else {
         var originalColor = empty[0].style.borderColor;
@@ -1533,7 +1582,8 @@ document.addEventListener("DOMContentLoaded", () => {
     socket = new WebSocket(WEB_SOCKET_URL);
 
     socket.addEventListener("message", function loadData(event) {
-        storeJobData(JSON.parse(event.data));
+        let data = JSON.parse(event.data);
+        storeJobData(data);
         socket.removeEventListener("message", loadData);
     });
 
