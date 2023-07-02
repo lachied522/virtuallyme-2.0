@@ -1,8 +1,7 @@
 from datetime import datetime
 
 from database import Base
-from sqlalchemy import (Column, DateTime, ForeignKey, Integer, String, Text,
-                        create_engine)
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text, Float, ARRAY
 from sqlalchemy.orm import backref, relationship
 
 
@@ -50,5 +49,6 @@ class Data(Base):
     __tablename__ = 'data'
     id = Column(Integer, primary_key=True)
     completion = Column(Text)
+    embedding = Column(ARRAY(Float)) #embedding
     feedback = Column(String(100)) #user-upload, positive, or negative
     job_id = Column(Integer, ForeignKey('job.id'))

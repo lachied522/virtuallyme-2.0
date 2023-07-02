@@ -10,6 +10,12 @@ asyncio
 aiohttp
 openai
 tiktoken
+pandas
+numpy
+langchain
+pinecone-client[grpc]
+matplotlib
+plotly
 scikit-learn
 beautifulsoup4
 google-api-python-client

@@ -78,7 +78,7 @@ def get_data(db: Session, member_id: str):
     for job in jobs:
         job_list.append({"job_id": job.id, "name": job.name, "word_count": job.word_count, "data": []})
         for sample in db.query(models.Data).filter_by(job_id=job.id).all():
-            job_list[-1]["data"].append({"completion": sample.completion, "feedback": sample.feedback})
+            job_list[-1]["data"].append({"completion": sample.completion, "embedding": sample.embedding, "feedback": sample.feedback})
 
     user_data["user"] = job_list
     
@@ -145,7 +145,8 @@ def sync_job(db: Session, new_job: schemas.Job, member_id: str):
         word_count = 0
         for data in new_job.data:
             completion = data.completion
-            db.add(models.Data(completion=completion, feedback="user-upload", job_id=job.id))
+            embedding = data.embedding
+            db.add(models.Data(completion=completion, embedding=embedding, feedback="user-upload", job_id=job.id))
             word_count += len(completion.split())
 
         job.word_count = word_count

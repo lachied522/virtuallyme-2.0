@@ -579,7 +579,7 @@ function syncJob(jobElement) {
             var data = {
                 "completion": text
             }
-            dataArray.push(data);
+            if (!dataArray.includes(data)) dataArray.push(data); //avoid duplicates   
         }
     }
     job["data"]=dataArray;
@@ -1059,7 +1059,9 @@ function handleTask(socket, taskWrapper, data) {
         } else {
             isWaiting = false;
             //hide cancel task button
-            document.querySelector(".waiting-wrapper").classList.toggle("show");
+            if (!document.querySelector(".waiting-wrapper").classList.contains("show")) {
+                document.querySelector(".waiting-wrapper").classList.toggle("show"); 
+            }
             
             this.removeEventListener("message", receive);
             //reset feedback bar
@@ -1111,13 +1113,20 @@ function handleTask(socket, taskWrapper, data) {
             clearInterval(waitingInterval);
             isWaiting = false;
             destination.textContent = "There was an error generating your response. Please try again.";
+            //hide cancel task button
+            if (!document.querySelector(".waiting-wrapper").classList.contains("show")) {
+                document.querySelector(".waiting-wrapper").classList.toggle("show"); 
+            }
         }
         this.removeEventListener("close", handle_close);
     });
 
     //add cancel event listener
-    document.querySelector(".waiting-popup").addEventListener("click", () => {
-        socket.send(JSON.stringify({"CANCEL": "[CANCEL TASK]"}));
+    document.querySelector(".waiting-popup").addEventListener("click", function cancelTask() {
+        if (isWaiting) {
+            socket.send(JSON.stringify({"CANCEL": "[CANCEL TASK]"}));
+            this.removeEventListener("click", cancelTask);
+        }
     });
 
     //send data to websocket
@@ -1401,6 +1410,10 @@ function compose(socket, category) {
                 optionsContainers[index].innerHTML += data;
             } else {
                 isWaiting = false;
+                //hide cancel button
+                if (!document.querySelector(".waiting-wrapper").classList.contains("show")) {
+                    document.querySelector(".waiting-wrapper").classList.toggle("show"); 
+                }
                 this.removeEventListener("message", receive);
                 optionsContainers.forEach((option, index) => {
                     option.closest(".module").classList.remove("no-hover");
@@ -1417,8 +1430,9 @@ function compose(socket, category) {
         });
 
         //add cancel event listener
-        document.querySelector(".waiting-popup").addEventListener("click", () => {
+        document.querySelector(".waiting-popup").addEventListener("click", function cancelTask() {
             socket.send(JSON.stringify({"CANCEL": "[CANCEL TASK]"}));
+            this.removeEventListener("click", cancelTask);
         });
 
         socket.send(JSON.stringify(data));
@@ -1660,22 +1674,19 @@ document.addEventListener("DOMContentLoaded", () => {
     }); 
 
     document.querySelector("[customID='task-to-compose']").addEventListener("click", () => {
-        if (isWaiting) {
-            return
-        } else {
+        if (!isWaiting) {
             let recentTasksContainer = document.querySelector("#recent-tasks");
             editComposition(recentTasksContainer.querySelectorAll(".module")[1]); //get most recent task
         }
     });
 
     document.querySelector("[customID='task-to-rewrite']").addEventListener("click", () => {
-        if (isWaiting) {
-            return
-        } else {
+        if (!isWaiting) {
             let text = document.querySelector("[customID='task-output']").value;
             let form = document.querySelector("[customID='submit-rewrite']");
             form.querySelector("[customInput='text']").value = text;
             form.querySelector("[customInput='text']").scrollIntoView({ behavior: "smooth", block: "center" });
+            form.querySelector("[customInput='additional']").value = "";
         }
     });
 

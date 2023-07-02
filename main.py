@@ -8,15 +8,16 @@ from io import BytesIO
 
 import aiohttp
 import openai
+from openai.embeddings_utils import cosine_similarity as openai_cosine_similarity, get_embedding
+from sklearn.metrics.pairwise import cosine_similarity as sklearn_cosine_similarity
+from sklearn.feature_extraction.text import TfidfVectorizer
 import tiktoken
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 from docx import Document
 from pdfreader import SimplePDFViewer
 from bs4 import BeautifulSoup
 from apiclient.discovery import build
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
-
-from apscheduler.schedulers.background import BackgroundScheduler
+import pandas as pd
 
 from fastapi import FastAPI, File, UploadFile, WebSocket, WebSocketDisconnect, Depends, Response, status
 from typing import Annotated
@@ -26,6 +27,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from websockets.exceptions import ConnectionClosedError
+from apscheduler.schedulers.background import BackgroundScheduler
 
 from database import SessionLocal
 from manager import UserCache, ConnectionManager
@@ -61,6 +63,12 @@ def get_db():
         yield db
     finally:
         db.close()
+
+def tiktoken_len(text):
+    tokens = enc.encode(
+        text
+    )
+    return len(tokens)
 
 async def turbo_openai_call(messages, max_tokens, temperature=0, presence_penalty=0):
     """
@@ -124,22 +132,38 @@ def openai_call(prompts, max_tokens, temperature=0, presence_penalty=0):
         responses.append(choice.text.strip())
     return responses
 
-def rank_samples(search_string, samples):
+def rank_samples(context, samples_data):
     """
     rank samples by how frequently common words appear
     
     :param search_string: 
     :param samples: array of strings to search through
+    :param embeddings: 
     """
-    if len(samples)==0:
+    if len(samples_data)==0:
         return []
     else:
-        vectorizer = TfidfVectorizer()
-        tfidf_matrix = vectorizer.fit_transform(samples)
-        search_tfidf = vectorizer.transform(search_string.split())
-        cosine_similarities = cosine_similarity(search_tfidf, tfidf_matrix).flatten()
+        embed_model = "text-embedding-ada-002"
+        try:
+            raise NotImplementedError()
+            #first try to sort samples by embedding cosine similarity
+            df = pd.DataFrame([{"completion": d["completion"], "embedding": d["embedding"]} for d in samples_data])
+            #get embedding of context
+            context_embedding = get_embedding(context, engine=embed_model)
+            #get similarities
+            df["similarity"] = df.embedding.apply(lambda x: openai_cosine_similarity(x, context_embedding))
+            #sort by descending similarity
+            df = df.sort_values("similarity", ascending=False)
 
-        return cosine_similarities
+            return df["completion"].tolist()
+        except:
+            samples = [d["completion"] for d in samples_data]
+            vectorizer = TfidfVectorizer()
+            tfidf_matrix = vectorizer.fit_transform(samples)
+            context_tfidf = vectorizer.transform(context.split())
+            cosine_similarities = sklearn_cosine_similarity(context_tfidf, tfidf_matrix).flatten()
+            #sort samples by cosine similarity
+            return [item for index, item in sorted(enumerate(samples), key = lambda x: cosine_similarities[x[0]], reverse=True)] 
 
 def sort_samples(samples):
     return list(dict.fromkeys(sorted(samples,key=len,reverse=True)))
@@ -192,113 +216,119 @@ async def construct_prompt(user_data, category, context, maxlength, job=-1):
     :param context: current prompt to rank samples by
     :param category: task, question, rewrite, composition
     """
-    #extract user data
-    name = user_data["name"]
-    description = user_data["description"]
-    about = user_data["about"]
-    if job > 0:
-        samples = [s for d in user_data["user"] for s in d["data"] if d["job_id"]==job]
-    else:
-        samples = [s for d in user_data["user"] for s in d["data"]]
+    try:
+        #extract user data
+        name = user_data["name"]
+        description = user_data["description"]
+        about = user_data["about"]
+        if job > 0:
+            samples_data = [s for d in user_data["user"] for s in d["data"] if d["job_id"]==job]
+        else:
+            samples_data = [s for d in user_data["user"] for s in d["data"]]
 
-    #initiate logit task
-    logit_task = asyncio.create_task(get_logit_bias(samples))
+        #initiate logit task
+        logit_task = asyncio.create_task(get_logit_bias(samples_data))
 
-    if len(samples)>0:
-        #prompt is different based on whether user has selected general or specific job
-        if category=="task":
-            if job < 0: 
-                #general
-                prompt = f"""My name is {name}. You are an adaptive assistant called Virtually{name}.
-                    I will give you samples of my writing, and then ask you to write something. You have three goals. \
-                    GOAL 1: Employ the same language, tonality, word choice, sentence structure, syntax, and semantics as present in MY writing. \
-                    I want you to write in the way you imagine I would, even if the context is different to the samples provided. \
-                    GOAL 2: Employ the same reasoning and rationale presented in MY writing to form your opinions. \
-                    GOAL 3: Employ a meaningful degree of complexity and variation that is characteristic of a human being."""
-                if description is not None:
-                    prompt += f"\nHere is a description of my writing style to help you achieve GOAL 1:\n'''\n{description}\n'''"
-                if about is not None:
-                    prompt += f"\nHere is some information about me to help you achieve GOAL 2:\n'''\n{about}\n'''\n"
-            else: 
-                #specific
-                prompt = f"""My name is {name}. You are an adaptive assistant called Virtually{name}.
-                    I will give you samples of my writing, and then ask you to write something. You have three goals. \
-                    GOAL 1: Employ the same language, tonality, word choice, sentence structure, syntax, and semantics as present in MY writing. \
-                    GOAL 2: Employ the same reasoning and rationale presented in MY writing to form your opinions. \
-                    GOAL 3: Employ a meaningful degree of complexity and variation that is characteristic of a human being."""
-                if description is not None:
-                    prompt += f"\nHere is a description of my writing style to help you achieve GOAL 1:\n'''\n{description}\n'''"
-                if about is not None:
-                    prompt += f"\nHere is some information about me to help you achieve GOAL 2:\n'''\n{about}\n'''\n"
-        elif category=="question":
-            if job < 0:
-                #general
+        if len(samples_data)>0:
+            #prompt is different based on whether user has selected general or specific job
+            if category=="task":
+                if job < 0: 
+                    #general
+                    prompt = f"""My name is {name}. You are an adaptive assistant called Virtually{name}. 
+I will give you samples of my writing, and then ask you to write something. You have three goals. 
+GOAL 1: Employ the same structure, language, tonality, word choice, syntax, and semantics as present in MY writing. \
+I want you to write in the way you imagine I would, even if the context is different to the samples provided. 
+GOAL 2: Employ the same reasoning and rationale presented in MY writing to form your opinions. 
+GOAL 3: Employ a meaningful degree of complexity and variation that is characteristic of a human being."""
+                    if description is not None:
+                        prompt += f"\nHere is a description of my writing style to help you achieve GOAL 1:\n'''\n{description}\n'''"
+                    if about is not None:
+                        prompt += f"\nHere is some information about me to help you achieve GOAL 2:\n'''\n{about}\n'''\n"
+                else: 
+                    #specific
+                    prompt = f"""My name is {name}. You are an adaptive assistant called Virtually{name}. \
+I will give you samples of my writing, and then ask you to write something. You have three goals. 
+GOAL 1: Employ the same structure, language, tonality, word choice, syntax, and semantics as present in MY writing. 
+GOAL 2: Employ the same reasoning and rationale presented in MY writing to form your opinions. 
+GOAL 3: Employ a meaningful degree of complexity and variation that is characteristic of a human being."""
+                    if description is not None:
+                        prompt += f"\nHere is a description of my writing style to help you achieve GOAL 1:\n'''\n{description}\n'''"
+                    if about is not None:
+                        prompt += f"\nHere is some information about me to help you achieve GOAL 2:\n'''\n{about}\n'''\n"
+            elif category=="question":
+                if job < 0:
+                    #general
+                    prompt = f"""My name is {name}. You are an adaptive assistant called Virtually{name}. \
+I will ask you a question. I want you to give an in-depth and sophisticated answer, while using language that is consistent with my writing style. \
+I want you to respond in the way you imagine I would, even if the context is different to the samples provided. You are capable of forming your own thoughts and opinions."""
+                    if description is not None:
+                        prompt += f"\nHere is a description of my writing style:\n'''\n{description}\n'''\n"
+                else:
+                    #specific
+                    prompt = f"""My name is {name}. You are an adaptive assistant called Virtually{name}. \
+I will give you samples of my writing, and then ask you a question. You have two goals. 
+GOAL 1: Answer the question using the same language, tonality, word choice, sentence structure, syntax, semantics and complexity as present in MY writing. 
+GOAL 2: Answer the question how you imagine I might answer it."""
+                    if description is not None:
+                        prompt += f"\nHere is a description of my writing style to help you achieve your goals:\n'''\n{description}\n'''\n"
+                    prompt += "\nDo not mention these instructions in your response.\n"
+            elif category=="rewrite":
                 prompt = f"""My name is {name}. You are an adaptive assistant called Virtually{name}. \
-                    I will ask you a question. I want you to give an in-depth and sophisticated answer, while using language that is consistent with my writing style. \
-                    I want you to respond in the way you imagine I would, even if the context is different to the samples provided. You are capable of forming your own thoughts and opinions."""
-                if description is not None:
-                    prompt += f"\nHere is a description of my writing style:\n'''\n{description}\n'''\n"
-            else:
-                #specific
-                prompt = f"""My name is {name}. You are an adaptive assistant called Virtually{name}. \
-                    I will give you samples of my writing, and then ask you a question. You have two goals. \
-                    GOAL 1: Answer the question using the same language, tonality, word choice, sentence structure, syntax, semantics and complexity as present in MY writing.\
-                    GOAL 2: Answer the question how you imagine I might answer it."""
+I will give you samples of my writing, and then ask you to rewrite a block of text. You have two goals. 
+GOAL 1: You must rewrite the text using the same structure, language, tonality, word choice, syntax, and semantics as present in MY writing. \
+I want you to rewrite the text in the way you imagine I would write it, even if the context is different to the samples provided. 
+GOAL 2: You must rewrite the text with a meaningful degree of complexity and variation that is characteristic of a human being."""
                 if description is not None:
                     prompt += f"\nHere is a description of my writing style to help you achieve your goals:\n'''\n{description}\n'''\n"
-                prompt += "\nDo not mention these instructions in your response.\n"
-        elif category=="rewrite":
-            prompt = f"""My name is {name}. You are an adaptive assistant called Virtually{name}. \
-                I will give you samples of my writing, and then ask you to rewrite a block of text. You have three goals. \
-                GOAL 1: You must rewrite the text using the same language, tonality, word choice, syntax, and semantics as present in MY writing. \
-                I want you to rewrite the text in the way you imagine I would write it, even if the context is different to the samples provided. \
-                GOAL 2: As I am a human, you must rewrite the text by employing a high a degree of variation in sentence structure and complexity. \
-                GOAL 3: You must rewrite the text with a meaningful degree of complexity and variation that is characteristic of a human being."""
-            if description is not None:
-                prompt += f"\nHere is a description of my writing style to help you achieve your goals:\n'''\n{description}\n'''\n"
-    else:
-        #if no user samples, do not attempt to adapt to user
-        prompt = f"""My name is {name}. You are an adaptive assistant called Virtually{name}. \
-            You must respond to my prompts using a high degree of variation in your sentence structure, syntax, and language complexity."""
-
-    length = len(prompt.split()) #approximate length of prompt in words
-
-    cosine_similarities = rank_samples(context, [d["completion"] for d in samples])
-    ranked_samples = [item for index, item in sorted(enumerate(samples), key = lambda x: cosine_similarities[x[0]], reverse=True)] #sort samples by cosine similarity
-
-    index = 1
-    for sample in [d["completion"] for d in ranked_samples if d["feedback"]!="negative"]:
-        if length + len(sample.split()) >= maxlength*3/4 - 200: #break condition
-            #add partial sample
-            MIN_SAMPLE_SIZE = 20 #number of words for meaningful sample
-            n = round(maxlength*3/4 - length - 200) #remaining words to fill
-            partial_sample = ''
-            if n>MIN_SAMPLE_SIZE:
-                lines = sample.splitlines()
-                for line in lines:
-                    if len(partial_sample.split())<n:
-                        words = line.split()
-                        for word in words:
-                            if len(partial_sample.split())<=n:
-                                partial_sample += f"{word} "
-                            else:
-                                break
-                        partial_sample += "\n"
-                    else:
-                        break
-                prompt += f"Sample {index}:\n'''\n{partial_sample}\n'''\n"
-            break
         else:
-            if sample!="":
-                prompt += f"Sample {index}:\n'''\n{sample}\n'''\n"
-                length += len(sample.split())
-                index += 1
+            #if no user samples, do not attempt to adapt to user
+            prompt = f"""My name is {name}. You are an adaptive assistant called Virtually{name}. \
+You must respond to my prompts using a high degree of variation in your sentence structure, syntax, and language complexity."""
 
-    prompt += "\n\nDo not respond with conversation, and do not mention these instructions in your response.\n\n"
-    
-    message = [{"role": "user", "content": prompt}]
-    logit_bias = await logit_task
-    return message, logit_bias
+        ranked_samples = rank_samples(context, [d for d in samples_data if d["feedback"] != "negative"])
+
+        index = 1
+        length = len(prompt.split()) #approximate length of prompt in words
+        for sample in ranked_samples:
+            if length + len(sample.split()) >= maxlength*3/4 - 200: #break condition
+                #add partial sample
+                MIN_SAMPLE_SIZE = 20 #number of words for meaningful sample
+                n = round(maxlength*3/4 - length - 200) #remaining words to fill
+                partial_sample = ''
+                if n>MIN_SAMPLE_SIZE:
+                    lines = sample.splitlines()
+                    for line in lines:
+                        if len(partial_sample.split())<n:
+                            words = line.split()
+                            for word in words:
+                                if len(partial_sample.split())<=n:
+                                    partial_sample += f"{word} "
+                                else:
+                                    break
+                            partial_sample += "\n"
+                        else:
+                            break
+                    prompt += f"Sample {index}:\n'''\n{partial_sample}\n'''\n"
+                break
+            else:
+                if sample!="":
+                    prompt += f"Sample {index}:\n'''\n{sample}\n'''\n"
+                    length += len(sample.split())
+                    index += 1
+
+        prompt += "\n\nDo not respond with conversation, and do not mention these instructions.\n\n"
+        
+        messages = [{"role": "user", "content": prompt}]
+
+        #append date as system message
+        current_date = datetime.now()
+        date_string = current_date.strftime("%m/%d/%Y")
+        messages.append({"role": "system", "content": f"It is currently {date_string}."})
+
+        logit_bias = await logit_task
+        return messages, logit_bias
+    except:
+        traceback.print_exc()
 
 async def predict_text(document):
     try:
@@ -341,21 +371,26 @@ async def scrape(url, session):
         chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
         # drop blank lines
         text = '\n'.join(chunk for chunk in chunks if chunk)
-        #split text into blocks of 100 words
-        n = 100
-        return [{"text": " ".join(text.split()[i:i+n]), "url": url} for i in range(0, len(text.split()), n)]
+        #split text into chunks of 400 words
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1200,
+            chunk_overlap=20
+        )
+        docs = text_splitter.split_text(text)
+        return [{"text": s, "url": url} for s in docs]
     except:
         return [{"text": "", "url": ""}]
     
 
-async def conduct_search(query):    
-    cse_ID = "d7251a9905c2540fa"
+async def conduct_search(query): 
+    CSE_ID = "d7251a9905c2540fa"
+    embed_model = "text-embedding-ada-002"
     #add current date in MMMM-YYYY format to Google search query
     current_date = datetime.now()
     date_string = current_date.strftime("%B %Y")
 
     resource = build("customsearch", "v1", developerKey=GOOGLE_API_KEY).cse()
-    result = resource.list(q=query + f" {date_string} -headlines -video -pdf", cx=cse_ID).execute()
+    result = resource.list(q=query + f" {date_string} -headlines -video -pdf", cx=CSE_ID).execute()
 
     result_list = []
     for item in result["items"]:
@@ -381,39 +416,44 @@ async def conduct_search(query):
             for url in [item["link"] for item in result["items"]]:
                 tasks.append(asyncio.create_task(scrape(url, session)))
             results = await asyncio.gather(*tasks)
-        
-        results = [{"text": d["text"], "url": d["url"]} for sublist in results for d in sublist if d["text"]!=""]
-        cosine_similarities = rank_samples(query, [d["text"] for d in results])
-        ranked_context = [item for index, item in sorted(enumerate(results), key = lambda x: cosine_similarities[x[0]], reverse=True)]
+
+        #create dataframe with text and url as columns
+        df = pd.DataFrame([{"text": d["text"], "url": d["url"]} for sublist in results for d in sublist if d["text"]!=""])
+        #get query embedding
+        query_embedding = get_embedding(query, engine=embed_model)
+        #get text embeddings
+        emb = openai.Embedding.create(input=df["text"].tolist(), model="text-embedding-ada-002")
+        df["embedding"] = [e.embedding for e in emb.data]
+        #get similarities
+        df["similarity"] = df.embedding.apply(lambda x: openai_cosine_similarity(x, query_embedding))
+        #sort by descending similarity
+        df = df.sort_values("similarity", ascending=False)
         #get a a bit of context from each url
-        joined_context = ""
-        urls = []
-        for d in ranked_context:
-            url = d["url"]
-            if len(set(urls)) >= 5:
-                #only want to include five sources
-                break
-            elif len(joined_context)+len(d["text"]) > 8000:
-                #prompt limit 3097 tokens (4097-1000 for completion)
-                #1000 tokens ~ 750 words
+        #want a string in the form Source i:\n'''\n{extracted_text}\n''' for each source
+        extracted_texts = {}
+        for index, row in df.iterrows():
+            text = row["text"]
+            url = row["url"]
+            if tiktoken_len(" ".join([s for s in list(extracted_texts.values())]) + text) > 2000:
+                #limit extracted texts to 2000 tokens
                 break
             else:
-                if urls.count(url) < 10:
-                    if url in urls:
-                        reference_number = urls.index(url)+1
+                if url in extracted_texts:
+                    extracted_texts[url] += f"{text}\n"
+                else:
+                    if len(extracted_texts.keys()) < 5:
+                        extracted_texts[url] = f"{text}\n"
                     else:
-                        reference_number = len(set(urls))+1
-                    joined_context += f"Source {reference_number}:" + d["text"] + "\n"
-                    urls.append(url)
+                        #only want to include five sources
+                        break
 
-        else:
-            raise Exception("Search returned no results")
+        sources = [d for d in result_list if d["url"] in list(extracted_texts.keys())]
 
-        sources = [d for d in result_list if d["url"] in list(set(urls))[:5]]
+        joined_context = "\n".join([f"Source {index+1}:\n'''\n{text}'''" for index, text in enumerate(list(extracted_texts.values()))])
 
         return joined_context, sources
     except Exception as e:
-        #traceback.print_exc()
+        traceback.print_exc()
         return "", []
 
 async def new_user_description(db: Session, member_id: str, samples_string: str):
@@ -446,7 +486,7 @@ async def streamAIResponse(websocket: WebSocket, messages, logit_bias, max_token
     while attempts<3:
         try:    
             response = openai.ChatCompletion.create(
-                model="gpt-3.5-turbo",
+                model="gpt-3.5-turbo-16k",
                 messages=messages,
                 max_tokens=max_tokens,
                 temperature=temperature,
@@ -540,44 +580,74 @@ def remove_job(job: schemas.Job, job_id: str, db: Session = Depends(get_db)):
 
 
 @app.post("/sync_job/{member_id}", status_code=200)
-async def sync_job(job: schemas.Job, member_id: str, db: Session = Depends(get_db)):
+async def sync_job(job_schema: schemas.Job, member_id: str, db: Session = Depends(get_db)):
     """
     Called when user makes changes to job. 
     User jobs influence their writing description and about information.
-    """
-    try:
-        job_id = job.id
-        #extract samples from new data
-        new_samples = [d.completion for d in job.data]
 
+    #TO DO: clean up storage of user data
+    """
+    embed_model = "text-embedding-ada-002"
+    try:
+        job_id = job_schema.id
+        #extract text from new data, ensuring no duplicates
+        new_samples = list(dict.fromkeys([d.completion for d in job_schema.data]))
         #get user data
         if member_id in cache.active_users:
             existing_data = cache.get_user_data(member_id)["data"]
         else:
             existing_data = crud.get_data(db, member_id)
 
-        #extract samples from existing data
+        #extract existing data
         existing_samples = [d["completion"] for job in existing_data["user"] for d in job["data"]]
+        existing_embeds = [d["embedding"] for job in existing_data["user"] for d in job["data"]]
+
+        #get embedding for samples that do not already have embedding, 
+        #and length
+        missing_embeds = [s for s in new_samples if s not in existing_samples]
+
+        if len(missing_embeds) > 0:
+            attempts = 0 #catch RateLimitErrors
+            while attempts < 3:
+                
+                try:
+                    embeds = openai.Embedding.create(input=missing_embeds, model=embed_model)
+                    break
+
+                except:
+                    #traceback.print_exc()
+                    attempts += 1
+
+            #fill in missing embeds
+            new_embeds = [e.embedding for e in embeds.data]
+
+        for sample in job_schema.data:
+            if sample.completion in existing_samples:
+                sample.embedding = existing_embeds[existing_samples.index(sample.completion)]
+                
+            elif sample.completion in missing_embeds:
+                sample.embedding = new_embeds[missing_embeds.index(sample.completion)]
+
+            else:
+                sample.embedding = []
 
         #run description if number of words is at least 300
         #and if new data is substantially different to existing data
         new_samples_str = str("\n".join(sort_samples(new_samples)))
         existing_samples_str = str("\n".join(sort_samples(existing_samples)))
 
-        #only consider first 8,000 characters ~ 2000 words
-        #if len(new_samples_str.split()) > 300 and new_samples_str[:1000] != existing_samples_str[:1000]:
-        if True:
+        if len(new_samples_str) > 1000 and new_samples_str[:1000] != existing_samples_str[:1000]:
             #TO DO: implement a better way of checking whether data changes substantially
             asyncio.create_task(new_user_description(db, member_id, new_samples_str[:8000]))
-
+        
         #sync job in db
-        job = crud.sync_job(db, job, member_id)
+        crud.sync_job(db, job_schema, member_id)
 
         #refresh job data in cache
         if member_id in cache.active_users:
             for cached_job in existing_data["user"]:
                 if cached_job["job_id"]==int(job_id):
-                    cached_job.update({"data": [{"completion": d.completion, "feedback": d.feedback} for d in job.data]})
+                    cached_job.update({"data": [{"completion": d.completion, "embedding": d.embedding, "feedback": d.feedback} for d in job_schema.data]})
                     cache.update_user_data(member_id, existing_data)
                     break
 
@@ -708,7 +778,10 @@ def reset_words():
 @app.post("/detect", status_code=200)
 async def detect(body: schemas.DetectRequestBody):
     text = body.text
-    score = await predict_text(str(text))
+    try:
+        score = await asyncio.wait_for(predict_text(str(text)), timeout=4) #prevent timeout
+    except:
+        score = -1
     return score
 
 @app.post('/read_files', status_code=200)
@@ -773,7 +846,7 @@ async def handleTask(user_id: str, websocket: WebSocket, data: dict):
             margin = 400  #allow for uncounted tokens and fluctuations in token count
 
             if search:
-                maxlength = 4097 - 450 - length_tokens - len(additional.split())*4/3 - margin #prompt limit 4097 tokens
+                maxlength = 16000 - 3097 - length_tokens - len(additional.split())*4/3 - margin #prompt limit 16000 tokens - 3097 for search
 
                 #search web and get user data simultaneously 
                 search_task = asyncio.create_task(conduct_search(topic))
@@ -783,22 +856,19 @@ async def handleTask(user_id: str, websocket: WebSocket, data: dict):
                 messages, logit_bias = await construct_task
 
                 if search_result != "":
-                    summarise_task = asyncio.create_task(summarise(topic, search_result))
+                    await websocket.send_json({"message": "[SOURCES]", "sources": sources}) #send sources to client
 
-                    await websocket.send_json({"message": "[SOURCES]", "sources": sources}) #send sources to client prior to awaiting summary
-
-                    summary = await summarise_task
-                    ##append search summary
-                    messages[0]["content"] += f"The following was following summarised from a variety of sources on the web. Sources are indicated by numbers in square brackets, e.g. [x].\
-                    You may refer to these sources in your response and use square brackets to reference where appropriate. If the context is not relevant you may disregard it.\nSummary of search:\n'''\n{summary}\n'''\n"
+                    #add search context to the prompt
+                    messages[0]["content"] += f"The following was extracted from the web to help you with your task. \
+You may refer to these sources in your response. I am especially interested in any relevant dates, stats, or figures.\n'''\n{search_result}\n'''\n"
 
                 else:
-                    await websocket.send_json({"message": "[SOURCES]", "sources": []})
+                    await websocket.send_json({"message": "[SOURCES]", "sources": []}) #send empty list for sources
 
             else:
                 search_result = ""
 
-                maxlength = 4097 - length_tokens - len(additional.split())*4/3 - margin #prompt limit 4097 tokens
+                maxlength = 16000 - length_tokens - len(additional.split())*4/3 - margin #prompt limit 16000 tokens
 
                 messages, logit_bias = await construct_prompt(user_data, data["category"], topic, maxlength, job)
 
@@ -820,10 +890,7 @@ async def handleTask(user_id: str, websocket: WebSocket, data: dict):
             
             margin = 400  #allow for uncounted tokens and fluctuations in token count
             if search:
-                if job > 0:
-                    maxlength = 4097 - 450 - len(additional.split())*4/3 - margin #prompt limit 4097 tokens - 450 for search result
-                else:
-                    maxlength = 0
+                maxlength = 16000 - 3097 - len(additional.split())*4/3 - margin #prompt limit 16000 tokens - 3097 for search result
                 #search web and construct messages simultaneously 
                 search_task = asyncio.create_task(conduct_search(question))
                 construct_task = asyncio.create_task(construct_prompt(user_data, data["category"], question, maxlength, job))
@@ -834,13 +901,12 @@ async def handleTask(user_id: str, websocket: WebSocket, data: dict):
                 if search_result != "":
                     summarise_task = asyncio.create_task(summarise(question, search_result))
 
-                    await websocket.send_json({"message": "[SOURCES]", "sources": sources}) #send sources to client prior to awaiting summary
+                    await websocket.send_json({"message": "[SOURCES]", "sources": sources}) #send sources to client
 
-                    summary = await summarise_task
-                    ##append search summary
-                    messages[0]["content"] += f"The following was following summarised from a variety of sources from the web. Sources are indicated by numbers in square brackets, e.g. [x]. \
-                    You may refer to these sources in your response and use square brackets to reference where appropriate. If the context is not relevant you may disregard it.\nSummary of search:\n'''\n{summary}\n'''\n"
-
+                    #add search context to the prompt
+                    messages[0]["content"] += f"The following was extracted from the web to help you answer the question. \
+You may refer to these sources in your response. I am especially interested in any relevant dates, stats, or figures.\n'''\n{search_result}\n'''\n"
+                                   
                 else:
                     await websocket.send_json({"message": "[SOURCES]", "sources": []})
 
@@ -848,7 +914,7 @@ async def handleTask(user_id: str, websocket: WebSocket, data: dict):
                 search_result = ""
 
                 if job > 0:
-                    maxlength = 4097  - len(additional.split())*4/3 - margin #prompt limit 4097 tokens
+                    maxlength = 16000  - len(additional.split())*4/3 - margin #prompt limit 16000 tokens
                 else:
                     maxlength = 0
 
@@ -872,7 +938,7 @@ async def handleTask(user_id: str, websocket: WebSocket, data: dict):
             length_tokens = round(len(text.split())*4/3)+100 #allow extra room  in response for rewrite
             margin = 400 #allow for uncounted tokens and fluctuations in token count
 
-            maxlength = 4097 - length_tokens - len(text.split())*4/3 - len(additional.split())*4/3 - margin #prompt limit 4097 tokens
+            maxlength = 16000 - length_tokens - len(text.split())*4/3 - len(additional.split())*4/3 - margin #prompt limit 16000 tokens
             messages, logit_bias = await construct_prompt(user_data, data["category"], text, maxlength, job)
 
             messages[0]["content"] += f"Text:\n\n{text}\n\n"
@@ -904,7 +970,10 @@ async def handleTask(user_id: str, websocket: WebSocket, data: dict):
         completion = await streamAIResponse(websocket, messages, logit_bias, max_tokens, temperature, presence_penalty, n)
 
         if data["category"]!="idea":
-            score = await predict_text(completion)
+            try:
+                score = await asyncio.wait_for(predict_text(completion), timeout=4) #prevent timeout
+            except:
+                score = -1
         else:
             #ideas are not scored
             score = None
@@ -938,7 +1007,7 @@ async def handleCompose(user_id: str, websocket: WebSocket, data: dict):
         if data["category"]=="sentence":
             length_tokens = 40
             margin = 400
-            maxlength = 4097 - length_tokens - len(text.split())*4/3 - margin #prompt limit 4097 tokens
+            maxlength = 16000 - length_tokens - len(text.split())*4/3 - margin #prompt limit 16000 tokens
 
             messages, logit_bias = await construct_prompt(user_data, "task", topic, maxlength, job)
             
@@ -958,7 +1027,7 @@ async def handleCompose(user_id: str, websocket: WebSocket, data: dict):
         elif data["category"]=="paragraph":
             length_tokens = 120
             margin = 400
-            maxlength = 4097 - length_tokens - len(text.split())*4/3 - margin #prompt limit 4097 tokens
+            maxlength = 16000 - length_tokens - len(text.split())*4/3 - margin #prompt limit 16000 tokens
 
             messages, logit_bias = await construct_prompt(user_data, "task", topic, maxlength, job)
             if len(text) > 0:
@@ -978,7 +1047,7 @@ async def handleCompose(user_id: str, websocket: WebSocket, data: dict):
             length_tokens = round(len(extract.split())*4/3)+100 #number of tokens allowed in response
 
             margin = 400
-            maxlength = 4097 - length_tokens*2 - len(text.split())*4/3 - margin #length_tokens appears twice, once in prompt and in completion
+            maxlength = 16000 - length_tokens*2 - len(text.split())*4/3 - margin #length_tokens appears twice, once in prompt and in completion
 
             messages, logit_bias = await construct_prompt(user_data, "rewrite", topic, maxlength, job)
 
@@ -992,7 +1061,10 @@ async def handleCompose(user_id: str, websocket: WebSocket, data: dict):
         n = 3
         completion = await streamAIResponse(websocket, messages, logit_bias, max_tokens, temperature, presence_penalty, n)
 
-        score = await predict_text(completion)
+        try:
+            score = await asyncio.wait_for(predict_text(completion), timeout=4) #prevent timeout
+        except:
+            score = -1
 
         await websocket.send_json({"message": "[END MESSAGE]", "score": score}) #send score 
 
@@ -1075,7 +1147,6 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
     await manager.disconnect(websocket)
     
     asyncio.create_task(check_connection(user_id)) #creates background task to remove data from cache after five seconds
-
 
 @app.on_event("startup")
 async def startup():

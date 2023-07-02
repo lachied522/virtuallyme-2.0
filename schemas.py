@@ -10,6 +10,7 @@ from pydantic import BaseModel
 class Data(BaseModel):
     id: Optional[int]
     completion: str
+    embedding: Optional[List[float]]
     feedback: Optional[str] = None #user-upload, positive, or negative
     job_id: Optional[str]
 
