@@ -1059,7 +1059,7 @@ function handleTask(socket, taskWrapper, data) {
         } else {
             isWaiting = false;
             //hide cancel task button
-            if (!document.querySelector(".waiting-wrapper").classList.contains("show")) {
+            if (document.querySelector(".waiting-wrapper").classList.contains("show")) {
                 document.querySelector(".waiting-wrapper").classList.toggle("show"); 
             }
             
@@ -1114,7 +1114,7 @@ function handleTask(socket, taskWrapper, data) {
             isWaiting = false;
             destination.textContent = "There was an error generating your response. Please try again.";
             //hide cancel task button
-            if (!document.querySelector(".waiting-wrapper").classList.contains("show")) {
+            if (document.querySelector(".waiting-wrapper").classList.contains("show")) {
                 document.querySelector(".waiting-wrapper").classList.toggle("show"); 
             }
         }
@@ -1411,7 +1411,7 @@ function compose(socket, category) {
             } else {
                 isWaiting = false;
                 //hide cancel button
-                if (!document.querySelector(".waiting-wrapper").classList.contains("show")) {
+                if (document.querySelector(".waiting-wrapper").classList.contains("show")) {
                     document.querySelector(".waiting-wrapper").classList.toggle("show"); 
                 }
                 this.removeEventListener("message", receive);
